@@ -1,0 +1,60 @@
+*.rar
+*.zip
+*.7z
+
+node_modules/
+build/
+dist/.next/
+.next/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Private keys and credentials
+keys/
+
+# Next.js generated files
+**/.next/
+**/out/
+
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/build/
+
+# Logs and caches
+**/*.log
+**/.cache/
+**/tmp/
+
+# Runtime uploads - keep actual files on server/storage
+backend/uploads/
+backend/public/uploads/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+\# Separate Rider App Repository
+/Rider-app/
+
+# Dependencies and build files
+**/node_modules/
+**/.next/
+**/dist/
+**/build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Only frontend and backend belong in the main repository
+/*
+!/frontend/
+!/backend/
+!/.gitignore
