@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
-import { api } from '@/lib/api';
+import { api, getBaseUrl } from '@/lib/api';
 import * as XLSX from 'xlsx';
 
 /* ──────────────────────────────────────────────────────────────
@@ -267,7 +267,7 @@ export default function VehicleListPage() {
     setImportLoading(true);
     setImportResult(null);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/vehicles/bulk-import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -294,7 +294,7 @@ export default function VehicleListPage() {
   };
 
   const handleDownloadSample = () => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     window.open(`${apiUrl}/vehicles/sample-excel`, '_blank');
   };
 
@@ -547,6 +547,8 @@ export default function VehicleListPage() {
                       <option value="Evegah Mink">Evegah Mink</option>
                       <option value="Evegah Fly">Evegah Fly</option>
                       <option value="Evegah Pro">Evegah Pro</option>
+                      <option value="Evegah King">Evegah King</option>
+                      <option value="Evegah Nemo">Evegah Nemo</option>
                     </>
                   )}
                 </select>
@@ -783,6 +785,8 @@ export default function VehicleListPage() {
                           <option value="Evegah Pro">Evegah Pro</option>
                           <option value="Evegah Fly">Evegah Fly</option>
                           <option value="Evegah Mink">Evegah Mink</option>
+                          <option value="Evegah King">Evegah King</option>
+                          <option value="Evegah Nemo">Evegah Nemo</option>
                         </>
                       )}
                     </select>

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
+import { getBaseUrl } from '@/lib/api';
 
 const CSS = `
 .rr-shell { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Inter', sans-serif; }
@@ -153,18 +154,27 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [selectedZone, setSelectedZone] = useState<string>(() => {
+  const getInitialZone = (): string => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+      const storedActive = localStorage.getItem('evegah_active_zone');
+      const storedSelected = localStorage.getItem('evegah_selected_zone');
+      const userZone = localStorage.getItem('evegah_user_zone');
+      const role = localStorage.getItem('evegah_user_role') || '';
+      const isSuper = role === 'super_admin' || role.toLowerCase().includes('super');
+      if (!isSuper && userZone && userZone !== 'All Zones') {
+        return userZone;
+      }
+      if (storedActive && storedActive !== 'All Zones') return storedActive;
+      if (storedSelected && storedSelected !== 'All Zones') return storedSelected;
+      if (userZone && userZone !== 'All Zones') return userZone;
+      return 'All Zones';
     }
     return 'All Zones';
-  });
+  };
+  const [selectedZone, setSelectedZone] = useState<string>(getInitialZone);
   const [zoneFilter, setZoneFilter] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const z = localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || '';
-      return z === 'All Zones' ? '' : z;
-    }
-    return '';
+    const init = getInitialZone();
+    return init === 'All Zones' ? '' : init;
   });
   const [zonesList, setZonesList] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +184,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
   useEffect(() => {
     const updateZone = () => {
       if (typeof window !== 'undefined') {
-        const z = localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+        const z = getInitialZone();
         setSelectedZone(z);
         setZoneFilter(z === 'All Zones' ? '' : z);
       }
@@ -190,7 +200,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
 
   // Fetch all zones for dropdown
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/zones`)
       .then(r => r.json())
       .then(res => {
@@ -247,10 +257,12 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
 
   const fetchReservations = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
       const statusParam = statusFilter ? `&status=${statusFilter}` : '';
-      const effectiveZone = zoneFilter || (selectedZone !== 'All Zones' ? selectedZone : '');
+      const effectiveZone = (selectedZone && selectedZone !== 'All Zones') 
+        ? selectedZone 
+        : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
       const zoneParam = effectiveZone ? `&zone=${encodeURIComponent(effectiveZone)}` : '';
       
       const res = await fetch(`${apiUrl}/reservations?page=${page}&limit=10${searchParam}${statusParam}${zoneParam}`);
@@ -315,7 +327,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
     setResToDelete(null);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       await fetch(`${apiUrl}/reservations`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -380,7 +392,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
 
     // Fetch available vehicles and batteries FILTERED BY PICKUP ZONE from backend API!
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const [vRes, bRes] = await Promise.all([
         fetch(`${apiUrl}/reservations/available-vehicles?zone=${encodeURIComponent(pickupZone)}`),
         fetch(`${apiUrl}/batteries?status=idle`)
@@ -416,7 +428,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
     }
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/reservations/${resId}/allocate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -442,7 +454,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
     if (!confirm('Are you sure you want to cancel this reservation?')) return;
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/reservations/${resId}/cancel`, { method: 'POST' });
       if (res.ok) {
         const body = await res.json();
@@ -461,7 +473,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
     if (!confirm('Are you sure you want to return/end this ride? The vehicle and battery will be released.')) return;
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/reservations/${resId}/return`, { method: 'POST' });
       if (res.ok) {
         const body = await res.json();
@@ -735,7 +747,9 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
                   ) : (
                     list
                       .filter(r => {
-                        const effectiveZone = zoneFilter || (selectedZone !== 'All Zones' ? selectedZone : '');
+                        const effectiveZone = (selectedZone && selectedZone !== 'All Zones') 
+                          ? selectedZone 
+                          : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
                         if (!effectiveZone) return true;
                         const ez = effectiveZone.toLowerCase().replace(/zone|vadodara|-/g, '').trim();
                         const pz = (r.pickup_zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();

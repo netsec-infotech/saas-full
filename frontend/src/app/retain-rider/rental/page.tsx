@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
+import { getBaseUrl } from '@/lib/api';
 
 /* ──────────────────────────────────────────────────────────────
    RETAIN RIDER REGISTRATION · Step 2 — Rental Details
@@ -414,7 +415,7 @@ export default function RetainRiderRentalPage() {
 
     // Dynamic models fetch from API
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/vehicles/models`)
       .then(res => res.json())
       .then(res => {
@@ -477,7 +478,7 @@ export default function RetainRiderRentalPage() {
 
   // Load all zones catalog
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/zones`)
       .then(res => res.json())
       .then(res => {
@@ -507,7 +508,7 @@ export default function RetainRiderRentalPage() {
   useEffect(() => {
     if (!activeZoneName) return;
     setLoadingVehicles(true);
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
 
     fetch(`${apiUrl}/vehicles?zone=${encodeURIComponent(activeZoneName)}&limit=100`)
       .then(r => r.json())
@@ -545,7 +546,7 @@ export default function RetainRiderRentalPage() {
   // Fetch batteries for selected zone
   useEffect(() => {
     if (!activeZoneName) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/batteries?zone=${encodeURIComponent(activeZoneName)}&limit=50`)
       .then(r => r.json())
       .then(res => {
@@ -565,7 +566,7 @@ export default function RetainRiderRentalPage() {
   // Fetch zone pricing packages
   useEffect(() => {
     if (!activeZoneName) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/zones/pricing?zone=${encodeURIComponent(activeZoneName)}`)
       .then(r => r.json())
       .then(res => {

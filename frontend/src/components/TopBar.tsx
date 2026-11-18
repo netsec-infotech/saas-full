@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Image from 'next/image';
 import DateRangeFilter from '@/components/DateRangeFilter';
+import { getBaseUrl } from '@/lib/api';
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
@@ -138,7 +139,7 @@ export default function TopBar({
 
   const fetchNotifications = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/notifications`);
       if (res.ok) {
         const body = await res.json();
@@ -195,7 +196,7 @@ export default function TopBar({
   // Fetch zones catalog from backend
   const fetchZones = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/zones`);
       if (res.ok) {
         const data = await res.json();
@@ -600,7 +601,7 @@ export default function TopBar({
                     style={{ fontSize: '10.5px', color: '#6366F1', fontWeight: '700', border: 'none', background: 'none', cursor: 'pointer' }}
                     onClick={async () => {
                       try {
-                        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+                        const apiUrl = getBaseUrl();
                         await fetch(`${apiUrl}/notifications/mark-read`, { method: 'POST' });
                         setUnreadCount(0);
                         setNotifications(prev => prev.map(n => ({ ...n, read: true })));

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import { saveDraft, loadDraft } from '@/utils/drafts';
+import { getBaseUrl } from '@/lib/api';
 
 /* ──────────────────────────────────────────────────────────────
    STEP 2 · RENTAL DETAILS — pixel-perfect
@@ -494,6 +495,36 @@ const formatLocalDate = (d: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
+const parseDurationDays = (pkg: any): number => {
+  if (!pkg) return 1;
+  if (pkg.duration_days && !isNaN(Number(pkg.duration_days)) && Number(pkg.duration_days) > 0) {
+    return Number(pkg.duration_days);
+  }
+  if (pkg.duration && !isNaN(Number(pkg.duration)) && Number(pkg.duration) > 0) {
+    return Number(pkg.duration);
+  }
+  const name = `${pkg.name || ''} ${pkg.type || ''}`.toLowerCase();
+  const match = name.match(/(\d+)\s*day/i);
+  if (match) return parseInt(match[1], 10);
+  if (name.includes('month') || name.includes('30 day')) return 30;
+  if (name.includes('week') || name.includes('7 day')) return 7;
+  if (name.includes('3 day')) return 3;
+  if (name.includes('daily') || name.includes('1 day')) return 1;
+  return 1;
+};
+
+const calculateDaysDifference = (start: string, end: string): number => {
+  if (!start || !end) return 1;
+  const [sy, sm, sd] = start.split('-').map(Number);
+  const [ey, em, ed] = end.split('-').map(Number);
+  if (!sy || !sm || !sd || !ey || !em || !ed) return 1;
+  const sDate = new Date(sy, sm - 1, sd);
+  const eDate = new Date(ey, em - 1, ed);
+  const diffTime = eDate.getTime() - sDate.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays > 0 ? diffDays : 1;
+};
+
 export default function RentalDetailsPage() {
   const router = useRouter();
 
@@ -603,7 +634,7 @@ export default function RentalDetailsPage() {
 
   // Load all zones catalog and listen for top header zone changes
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/zones`)
       .then(res => res.json())
       .then(res => {
@@ -644,7 +675,7 @@ export default function RentalDetailsPage() {
   // 1. When selectedZone changes, load available vehicles & derive available models
   useEffect(() => {
     if (!selectedZone) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     setLoadingVehicles(true);
 
     // Fetch available vehicles for this zone
@@ -782,7 +813,7 @@ export default function RentalDetailsPage() {
       // Deduplicate packages by duration (favoring model-specific package over generic 'All Models')
       const byDuration = new Map<number, any>();
       applicable.forEach(p => {
-        const d = parseInt(p.duration || p.duration_days || 1, 10);
+        const d = parseDurationDays(p);
         const existing = byDuration.get(d);
         const pModel = (p.model || '').toLowerCase().trim();
         const isModelSpecific = pModel && pModel !== 'all models' && pModel !== 'all';
@@ -791,6 +822,7 @@ export default function RentalDetailsPage() {
             ...p,
             id: p.id || `pkg_${d}d`,
             duration: d,
+            duration_days: d,
             name: p.name || (d === 1 ? 'Daily Pass (1 Day)' : d === 7 ? 'Weekly Pass (7 Days)' : d === 30 ? 'Monthly Pass (30 Days)' : `${d} Days Pass`),
             price: parseFloat(p.price || 0),
             deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0))
@@ -818,7 +850,7 @@ export default function RentalDetailsPage() {
   // Auto-calculate return date & return time based on package duration (Local time aware, exact days)
   useEffect(() => {
     if (!selectedPackage) return;
-    const duration = Number(selectedPackage.duration_days || selectedPackage.duration) || 1;
+    const duration = parseDurationDays(selectedPackage);
     const pkgName = (selectedPackage.name || '').toLowerCase();
     const isHourly = Boolean(selectedPackage.isHourly || selectedPackage.roundingRule || pkgName.includes('hour') || (selectedPackage.type && selectedPackage.type.toLowerCase().includes('hour')));
 
@@ -1174,7 +1206,11 @@ export default function RentalDetailsPage() {
                         onChange={(e) => {
                           const val = e.target.value;
                           const found = packagesList.find(p => String(p.id) === String(val));
-                          if (found) setSelectedPackage(found);
+                          if (found) {
+                            setSelectedPackage(found);
+                            const dur = parseDurationDays(found);
+                            setTotalDays(dur);
+                          }
                         }}
                       >
                         {packagesList.map(p => (
@@ -1231,7 +1267,14 @@ export default function RentalDetailsPage() {
                               type="date"
                               className="nr-inp" 
                               value={startDate} 
-                              onChange={(e) => setStartDate(e.target.value)} 
+                              onChange={(e) => {
+                                const newStart = e.target.value;
+                                setStartDate(newStart);
+                                if (newStart && returnDate) {
+                                  const diff = calculateDaysDifference(newStart, returnDate);
+                                  setTotalDays(diff);
+                                }
+                              }} 
                             />
                           </div>
                           <div className="nr-inp-wrap" style={{ width: 130 }}>
@@ -1255,7 +1298,14 @@ export default function RentalDetailsPage() {
                               type="date"
                               className="nr-inp" 
                               value={returnDate} 
-                              onChange={(e) => setReturnDate(e.target.value)} 
+                              onChange={(e) => {
+                                const newReturn = e.target.value;
+                                setReturnDate(newReturn);
+                                if (startDate && newReturn) {
+                                  const diff = calculateDaysDifference(startDate, newReturn);
+                                  setTotalDays(diff);
+                                }
+                              }} 
                             />
                           </div>
                           <div className="nr-inp-wrap" style={{ width: 130 }}>

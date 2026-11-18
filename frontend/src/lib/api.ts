@@ -1,14 +1,18 @@
-const getBaseUrl = () => {
+export const getBaseUrl = () => {
   if (typeof window !== 'undefined') {
+    if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
     if (window.location.hostname.includes('evegah.cloud')) {
       return 'https://evegah.cloud/api';
     }
-    return '/api';
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      return '/api';
+    }
+    return 'http://localhost:5000/api';
   }
   return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 };
 
-const BASE_URL = getBaseUrl();
+export const BASE_URL = getBaseUrl();
 
 const getAuthHeaders = (extraHeaders: Record<string, string> = {}) => {
   const headers: Record<string, string> = {

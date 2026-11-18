@@ -1030,18 +1030,25 @@ export default function RentersPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [packageFilter, setPackageFilter] = useState('');
   const [modeFilter, setModeFilter] = useState('');
-  const [zoneFilter, setZoneFilter] = useState<string>(() => {
+  const getInitialZone = (): string => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+      const storedActive = localStorage.getItem('evegah_active_zone');
+      const storedSelected = localStorage.getItem('evegah_selected_zone');
+      const userZone = localStorage.getItem('evegah_user_zone');
+      const role = localStorage.getItem('evegah_user_role') || '';
+      const isSuper = role === 'super_admin' || role.toLowerCase().includes('super');
+      if (!isSuper && userZone && userZone !== 'All Zones') {
+        return userZone;
+      }
+      if (storedActive && storedActive !== 'All Zones') return storedActive;
+      if (storedSelected && storedSelected !== 'All Zones') return storedSelected;
+      if (userZone && userZone !== 'All Zones') return userZone;
+      return 'All Zones';
     }
     return 'All Zones';
-  });
-  const [selectedZone, setSelectedZone] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
-    }
-    return 'All Zones';
-  });
+  };
+  const [zoneFilter, setZoneFilter] = useState<string>(getInitialZone);
+  const [selectedZone, setSelectedZone] = useState<string>(getInitialZone);
   const [zonesList, setZonesList] = useState<string[]>([]);
 
   useEffect(() => {
@@ -1079,7 +1086,7 @@ export default function RentersPage() {
   useEffect(() => {
     const updateZone = () => {
       if (typeof window !== 'undefined') {
-        const z = localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+        const z = getInitialZone();
         setSelectedZone(z);
         setZoneFilter(z);
       }

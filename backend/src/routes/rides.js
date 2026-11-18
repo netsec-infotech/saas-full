@@ -638,8 +638,8 @@ router.get('/active', async (req, res) => {
         r.avatar_url,
         r.created_at,
         v.registration_number,
-        v.model as vehicle_model,
-        v.battery_percentage,
+        COALESCE(v.evegah_model_name, v.vehicle_model, 'Evegah City') as vehicle_model,
+        COALESCE(v.battery_pct, 85) as battery_percentage,
         v.zone as vehicle_zone,
         b.soc as battery_soc,
         b.voltage as battery_voltage
@@ -712,8 +712,8 @@ router.get('/active/:identifier', async (req, res) => {
         r.avatar_url,
         r.created_at,
         v.registration_number,
-        v.model as vehicle_model,
-        v.battery_percentage,
+        COALESCE(v.evegah_model_name, v.vehicle_model, 'Evegah City') as vehicle_model,
+        COALESCE(v.battery_pct, 85) as battery_percentage,
         v.zone as vehicle_zone,
         b.soc as battery_soc,
         b.voltage as battery_voltage

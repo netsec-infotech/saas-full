@@ -412,6 +412,8 @@ export default function AddVehiclePage() {
                             <option value="Evegah Mink">Evegah Mink</option>
                             <option value="Evegah Fly">Evegah Fly</option>
                             <option value="Evegah Pro">Evegah Pro</option>
+                            <option value="Evegah King">Evegah King</option>
+                            <option value="Evegah Nemo">Evegah Nemo</option>
                           </>
                         )}
                       </select>

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 import * as XLSX from 'xlsx';
+import { getBaseUrl } from '@/lib/api';
 
 interface BatteryAsset {
   id: string;
@@ -125,7 +126,7 @@ export default function BatteryListPage() {
     if (!editingBattery) return;
     setIsSubmittingEdit(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/batteries/${encodeURIComponent(editingBattery.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -153,7 +154,7 @@ export default function BatteryListPage() {
       if (savedZone) setSelectedZone(savedZone);
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     fetch(`${apiUrl}/zones`)
       .then(r => r.json())
       .then(res => {
@@ -188,7 +189,7 @@ export default function BatteryListPage() {
   const fetchBatteries = async () => {
     setLoading(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const zParam = selectedZone && selectedZone !== 'All Zones' && selectedZone !== 'Multiple Zones'
         ? `?zone=${encodeURIComponent(selectedZone)}`
         : '';
@@ -230,7 +231,7 @@ export default function BatteryListPage() {
 
   const fetchStats = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const zParam = selectedZone && selectedZone !== 'All Zones' && selectedZone !== 'Multiple Zones'
         ? `?zone=${encodeURIComponent(selectedZone)}`
         : '';
@@ -281,7 +282,7 @@ export default function BatteryListPage() {
     setImportLoading(true);
     setImportResult(null);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/batteries/bulk-import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -309,7 +310,7 @@ export default function BatteryListPage() {
   };
 
   const handleDownloadSample = () => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+    const apiUrl = getBaseUrl();
     window.open(`${apiUrl}/batteries/sample-excel`, '_blank');
   };
 
@@ -327,7 +328,7 @@ export default function BatteryListPage() {
     }
     setIsSubmittingAdd(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/batteries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -370,7 +371,7 @@ export default function BatteryListPage() {
   const handleDeleteSingle = async (batteryId: string) => {
     if (!window.confirm(`Are you sure you want to delete battery "${batteryId}"? This will permanently remove it from the system.`)) return;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/batteries/${encodeURIComponent(batteryId)}`, {
         method: 'DELETE'
       });
@@ -392,7 +393,7 @@ export default function BatteryListPage() {
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} selected batteries? This action cannot be undone.`)) return;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const apiUrl = getBaseUrl();
       const res = await fetch(`${apiUrl}/batteries/bulk-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

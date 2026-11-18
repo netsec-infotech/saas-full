@@ -23,7 +23,18 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      const getApiUrl = () => {
+        if (typeof window !== 'undefined') {
+          if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+          if (window.location.hostname.includes('evegah.cloud')) return 'https://evegah.cloud/api';
+          if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            return '/api';
+          }
+          return 'http://localhost:5000/api';
+        }
+        return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+      };
+      const apiUrl = getApiUrl();
       const response = await fetch(`${apiUrl}/users/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
