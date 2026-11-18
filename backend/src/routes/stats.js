@@ -645,8 +645,19 @@ router.get('/zone-admin', async (req, res) => {
       allVehRes,
       allBatRes
     ] = await Promise.all([
-      // Total unique riders in this zone
-      db.query(`SELECT COUNT(DISTINCT mobile) as total FROM renters WHERE 1=1 ${zoneRenterClause} ${dateRenterClause}`, combinedParams),
+      // Total unique riders in this zone (Cross-platform: renters + reservations)
+      db.query(`
+        SELECT COUNT(DISTINCT clean_mobile) as total FROM (
+          SELECT RIGHT(REGEXP_REPLACE(COALESCE(r.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
+          FROM renters r
+          LEFT JOIN vehicles v ON (v.code = r.vehicle_id OR v.registration_number = r.vehicle_id)
+          WHERE 1=1 ${zoneRenterClause} ${dateRenterClause}
+          UNION
+          SELECT RIGHT(REGEXP_REPLACE(COALESCE(res.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
+          FROM reservations res
+          WHERE res.status != 'Cancelled' ${zoneResvClause} ${dateResvClause}
+        ) all_riders WHERE clean_mobile != ''
+      `, combinedParams),
       // Total rentals / bookings in this zone
       db.query(`SELECT COUNT(*) as total FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}`, combinedParams),
       // Revenue (fares + rent)

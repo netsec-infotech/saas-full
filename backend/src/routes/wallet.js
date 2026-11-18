@@ -170,6 +170,206 @@ router.post('/withdraw', async (req, res) => {
   }
 });
 
+// GET /api/wallet/users - List of all registered users with their live wallet balance (Zone & Role Aware)
+router.get('/users', async (req, res) => {
+  const { search, zone } = req.query;
+  const cleanSearch = (search || '').trim();
+  const rawZone = (zone || '').trim();
+  const callerRole = (req.headers['x-user-role'] || (req.user && req.user.role) || '').toLowerCase();
+  const callerZone = (req.headers['x-user-zone'] || (req.user && req.user.zone) || '').trim();
+  const isGlobalAdmin = callerRole.includes('super_admin') || 
+                        callerRole.includes('super admin') || 
+                        callerRole.includes('platform admin') || 
+                        callerRole === 'admin' ||
+                        callerRole === 'system';
+
+  let effectiveZone = rawZone;
+  if (!isGlobalAdmin && callerZone && callerZone.toLowerCase() !== 'all' && callerZone.toLowerCase() !== 'all zones') {
+    const callerAssigned = callerZone.split(',').map(z => z.trim()).filter(Boolean);
+    if (effectiveZone && effectiveZone.toLowerCase() !== 'all' && effectiveZone.toLowerCase() !== 'all zones') {
+      const isAllowed = callerAssigned.some(az => 
+        effectiveZone.toLowerCase().includes(az.toLowerCase()) || 
+        az.toLowerCase().includes(effectiveZone.toLowerCase())
+      );
+      if (!isAllowed) effectiveZone = callerZone;
+    } else {
+      effectiveZone = callerZone;
+    }
+  }
+
+  const isAllZones = !effectiveZone || 
+                     effectiveZone.toLowerCase() === 'all' || 
+                     effectiveZone.toLowerCase() === 'all zones' || 
+                     effectiveZone.toLowerCase() === 'all zones (multi-zone)';
+
+  try {
+    let query = `
+      SELECT 
+        MAX(r.id::text) AS id,
+        COALESCE(MAX(r.rider_name), 'Rider') AS name,
+        MAX(r.mobile) AS mobile,
+        COALESCE(MAX(r.email), '') AS email,
+        COALESCE(MAX(r.address), '') AS address,
+        COALESCE(MAX(r.kyc_status), 'Verified') AS kyc_status,
+        COALESCE(MAX(r.zone), MAX(v.zone), 'Gotri Zone') AS zone,
+        MAX(COALESCE(r.wallet_balance, 0.00)) AS wallet_balance,
+        MAX(COALESCE(r.bonus_balance, 0.00)) AS bonus_balance,
+        (MAX(COALESCE(r.wallet_balance, 0.00)) + MAX(COALESCE(r.bonus_balance, 0.00))) AS total_balance,
+        MIN(r.created_at) AS created_at
+      FROM renters r
+      LEFT JOIN vehicles v ON (v.code = r.vehicle_id OR v.registration_number = r.vehicle_id)
+      WHERE 1=1
+    `;
+
+    const params = [];
+    let pIdx = 1;
+
+    if (!isAllZones) {
+      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
+      query += ` AND (
+        r.zone ILIKE $${pIdx} OR r.zone ILIKE $${pIdx + 1} 
+        OR v.zone ILIKE $${pIdx} OR v.zone ILIKE $${pIdx + 1} 
+        OR r.zone = 'Multiple Zones'
+        OR EXISTS (
+          SELECT 1 FROM reservations res 
+          WHERE res.mobile = r.mobile 
+            AND (res.pickup_zone ILIKE $${pIdx} OR res.drop_zone ILIKE $${pIdx} 
+              OR res.pickup_zone ILIKE $${pIdx + 1} OR res.drop_zone ILIKE $${pIdx + 1})
+        )
+      )`;
+      params.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+      pIdx += 2;
+    }
+
+    if (cleanSearch.length > 0) {
+      query += ` AND (r.rider_name ILIKE $${pIdx} OR r.mobile ILIKE $${pIdx})`;
+      params.push(`%${cleanSearch}%`);
+      pIdx++;
+    }
+
+    query += `
+      GROUP BY COALESCE(NULLIF(RIGHT(REGEXP_REPLACE(COALESCE(r.mobile, ''), '\\D', '', 'g'), 10), ''), r.id::text)
+      ORDER BY total_balance DESC, MIN(r.created_at) DESC 
+      LIMIT 100
+    `;
+
+    const result = await db.query(query, params);
+
+    res.json({
+      status: 'success',
+      total: result.rows.length,
+      data: result.rows.map(row => ({
+        id: row.id,
+        name: row.name,
+        mobile: row.mobile,
+        email: row.email || `${(row.mobile || '').replace(/\D/g, '')}@evegah.com`,
+        address: row.address || 'Vadodara, Gujarat',
+        kyc_status: row.kyc_status || 'Verified',
+        zone: row.zone || 'Gotri Zone',
+        wallet_balance: parseFloat(row.wallet_balance) || 0.00,
+        bonus_balance: parseFloat(row.bonus_balance) || 0.00,
+        total_balance: parseFloat(row.total_balance) || 0.00,
+        created_at: row.created_at
+      }))
+    });
+  } catch (err) {
+    console.error('Failed to get wallet users list:', err.message);
+    res.json({ status: 'success', total: 0, data: [] });
+  }
+});
+
+// POST /api/wallet/add-money
+// POST /api/wallet/add-money - Direct wallet top-up into Postgres
+router.post('/add-money', async (req, res) => {
+  try {
+    const { mobile, amount, payment_method, razorpay_payment_id, transaction_id } = req.body;
+    const numAmount = parseFloat(amount || 0);
+    const rawMobile = (mobile || '').trim();
+    const cleanMobile = rawMobile.replace(/\D/g, '');
+    const last10 = cleanMobile.length >= 10 ? cleanMobile.slice(-10) : cleanMobile;
+    const txId = transaction_id || razorpay_payment_id || `PAY_${Date.now()}`;
+    const method = payment_method || 'ICICI UPI';
+
+    if (numAmount <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Valid amount is required' });
+    }
+
+    // 1. Update renters wallet balance
+    let updatedBal = numAmount;
+    if (last10.length > 0) {
+      const updateRes = await db.query(
+        `UPDATE renters 
+         SET wallet_balance = COALESCE(wallet_balance, 0.00) + $1 
+         WHERE mobile LIKE $2 OR mobile LIKE $3
+         RETURNING wallet_balance, bonus_balance`,
+        [numAmount, `%${last10}%`, `%${cleanMobile}%`]
+      );
+      if (updateRes.rows.length > 0) {
+        updatedBal = parseFloat(updateRes.rows[0].wallet_balance) || numAmount;
+      }
+    }
+
+    // 2. Record transaction in wallet_transactions
+    await db.query(`
+      INSERT INTO wallet_transactions (mobile, title, subtitle, amount, type, status, payment_method, transaction_id)
+      VALUES ($1, 'Wallet Top-Up', $2, $3, 'Credit', 'Success', $4, $5)
+    `, [cleanMobile || rawMobile, `${method} Payment`, numAmount, method, txId]);
+
+    res.json({
+      status: 'success',
+      message: `₹${numAmount} credited to wallet successfully`,
+      data: {
+        main_balance: updatedBal,
+        transaction_id: txId
+      }
+    });
+  } catch (err) {
+    console.error('Add money error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// POST /api/wallet/withdraw - Debit from wallet for ride or payout
+router.post('/withdraw', async (req, res) => {
+  try {
+    const { mobile, amount, payout_method } = req.body;
+    const numAmount = parseFloat(amount || 0);
+    const rawMobile = (mobile || '').trim();
+    const cleanMobile = rawMobile.replace(/\D/g, '');
+    const last10 = cleanMobile.length >= 10 ? cleanMobile.slice(-10) : cleanMobile;
+    const txId = `WTH_${Date.now()}`;
+    const method = payout_method || 'Ride Payment';
+
+    if (numAmount <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Valid amount is required' });
+    }
+
+    // Debit balance
+    if (last10.length > 0) {
+      await db.query(
+        `UPDATE renters 
+         SET wallet_balance = GREATEST(0.00, COALESCE(wallet_balance, 0.00) - $1) 
+         WHERE mobile LIKE $2 OR mobile LIKE $3`,
+        [numAmount, `%${last10}%`, `%${cleanMobile}%`]
+      );
+    }
+
+    await db.query(`
+      INSERT INTO wallet_transactions (mobile, title, subtitle, amount, type, status, payment_method, transaction_id)
+      VALUES ($1, 'Ride Payment', $2, $3, 'Debit', 'Success', 'Wallet Main Balance', $4)
+    `, [cleanMobile || rawMobile, method, numAmount, txId]);
+
+    res.json({
+      status: 'success',
+      message: `₹${numAmount} debited from wallet`,
+      data: { transaction_id: txId }
+    });
+  } catch (err) {
+    console.error('Withdraw error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // GET /api/wallet/users - List of all registered users with their live wallet balance
 router.get('/users', async (req, res) => {
   const { search } = req.query;
@@ -404,9 +604,37 @@ router.post('/withdraw', async (req, res) => {
   }
 });
 
-// GET /api/wallet/transactions
+// GET /api/wallet/transactions (Zone & Role Aware)
 router.get('/transactions', async (req, res) => {
-  const { mobile } = req.query;
+  const { mobile, zone } = req.query;
+  const rawZone = (zone || '').trim();
+  const callerRole = (req.headers['x-user-role'] || (req.user && req.user.role) || '').toLowerCase();
+  const callerZone = (req.headers['x-user-zone'] || (req.user && req.user.zone) || '').trim();
+  const isGlobalAdmin = callerRole.includes('super_admin') || 
+                        callerRole.includes('super admin') || 
+                        callerRole.includes('platform admin') || 
+                        callerRole === 'admin' ||
+                        callerRole === 'system';
+
+  let effectiveZone = rawZone;
+  if (!isGlobalAdmin && callerZone && callerZone.toLowerCase() !== 'all' && callerZone.toLowerCase() !== 'all zones') {
+    const callerAssigned = callerZone.split(',').map(z => z.trim()).filter(Boolean);
+    if (effectiveZone && effectiveZone.toLowerCase() !== 'all' && effectiveZone.toLowerCase() !== 'all zones') {
+      const isAllowed = callerAssigned.some(az => 
+        effectiveZone.toLowerCase().includes(az.toLowerCase()) || 
+        az.toLowerCase().includes(effectiveZone.toLowerCase())
+      );
+      if (!isAllowed) effectiveZone = callerZone;
+    } else {
+      effectiveZone = callerZone;
+    }
+  }
+
+  const isAllZones = !effectiveZone || 
+                     effectiveZone.toLowerCase() === 'all' || 
+                     effectiveZone.toLowerCase() === 'all zones' || 
+                     effectiveZone.toLowerCase() === 'all zones (multi-zone)';
+
   const cleanMobile = (mobile || '').replace(/\D/g, '');
   const last10 = cleanMobile.slice(-10);
 
@@ -417,12 +645,26 @@ router.get('/transactions', async (req, res) => {
         wt.*,
         (SELECT COALESCE(r.rider_name, r.name) FROM renters r WHERE r.mobile LIKE '%' || RIGHT(wt.mobile, 10) || '%' LIMIT 1) AS customer_name
       FROM wallet_transactions wt
+      LEFT JOIN renters ren ON (ren.mobile LIKE '%' || RIGHT(wt.mobile, 10) || '%')
+      LEFT JOIN vehicles v ON (v.code = ren.vehicle_id OR v.registration_number = ren.vehicle_id)
+      WHERE 1=1
     `;
     let params = [];
+    let pIdx = 1;
+
     if (last10.length > 0) {
-      query += ` WHERE wt.mobile LIKE $1`;
+      query += ` AND wt.mobile LIKE $${pIdx}`;
       params.push(`%${last10}%`);
+      pIdx++;
     }
+
+    if (!isAllZones) {
+      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
+      query += ` AND (ren.zone ILIKE $${pIdx} OR ren.zone ILIKE $${pIdx + 1} OR v.zone ILIKE $${pIdx} OR v.zone ILIKE $${pIdx + 1} OR ren.zone = 'Multiple Zones')`;
+      params.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+      pIdx += 2;
+    }
+
     query += ` ORDER BY wt.created_at DESC LIMIT 100`;
 
     const result = await db.query(query, params);

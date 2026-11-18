@@ -101,25 +101,62 @@ interface WalletTx {
   created_at: string;
 }
 
+const getInitialZone = (): string => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('evegah_active_zone');
+    if (saved && saved !== 'All Zones') return saved;
+    const userStr = localStorage.getItem('evegah_user');
+    if (userStr) {
+      try {
+        const u = JSON.parse(userStr);
+        const r = (u.role || '').toLowerCase();
+        if ((r.includes('zone') || r.includes('franchise') || r.includes('employee')) && u.zone && u.zone !== 'All Zones') {
+          return u.zone;
+        }
+      } catch (_) {}
+    }
+  }
+  return 'All Zones';
+};
+
 export default function PaymentWalletPage() {
+  const [selectedZone, setSelectedZone] = useState<string>(getInitialZone);
   const [users, setUsers] = useState<WalletUser[]>([]);
   const [transactions, setTransactions] = useState<WalletTx[]>([]);
   const [activeTab, setActiveTab] = useState<'users' | 'transactions'>('users');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Sync with global active zone
+  useEffect(() => {
+    const updateZone = () => {
+      if (typeof window !== 'undefined') {
+        const z = getInitialZone();
+        setSelectedZone(z);
+      }
+    };
+    updateZone();
+    window.addEventListener('evegah_active_zone_changed', updateZone);
+    window.addEventListener('evegah_zone_changed', updateZone);
+    return () => {
+      window.removeEventListener('evegah_active_zone_changed', updateZone);
+      window.removeEventListener('evegah_zone_changed', updateZone);
+    };
+  }, []);
+
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedZone]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const resUsers: any = await api.get('/wallet/users');
+      const qZone = selectedZone && selectedZone !== 'All Zones' ? `?zone=${encodeURIComponent(selectedZone)}` : '';
+      const resUsers: any = await api.get(`/wallet/users${qZone}`);
       const uList = resUsers?.data?.data || resUsers?.data || (Array.isArray(resUsers) ? resUsers : []);
       setUsers(Array.isArray(uList) ? uList : []);
 
-      const resTxs: any = await api.get('/wallet/transactions');
+      const resTxs: any = await api.get(`/wallet/transactions${qZone}`);
       const tList = resTxs?.data?.data || resTxs?.data || (Array.isArray(resTxs) ? resTxs : []);
       setTransactions(Array.isArray(tList) ? tList : []);
     } catch (e) {

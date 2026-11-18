@@ -1217,11 +1217,49 @@ function RiderProfileContent() {
     setModalType('updateKyc');
   };
 
+  const getInitialZone = (): string => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('evegah_active_zone');
+      if (saved && saved !== 'All Zones') return saved;
+      const userStr = localStorage.getItem('evegah_user');
+      if (userStr) {
+        try {
+          const u = JSON.parse(userStr);
+          const r = (u.role || '').toLowerCase();
+          if ((r.includes('zone') || r.includes('franchise') || r.includes('employee')) && u.zone && u.zone !== 'All Zones') {
+            return u.zone;
+          }
+        } catch (_) {}
+      }
+    }
+    return 'All Zones';
+  };
+
+  const [activeZone, setActiveZone] = useState<string>(getInitialZone);
+
+  // Sync with global active zone
+  useEffect(() => {
+    const updateZone = () => {
+      if (typeof window !== 'undefined') {
+        const z = getInitialZone();
+        setActiveZone(z);
+      }
+    };
+    updateZone();
+    window.addEventListener('evegah_active_zone_changed', updateZone);
+    window.addEventListener('evegah_zone_changed', updateZone);
+    return () => {
+      window.removeEventListener('evegah_active_zone_changed', updateZone);
+      window.removeEventListener('evegah_zone_changed', updateZone);
+    };
+  }, []);
+
   const fetchFolderDocs = async () => {
     setLoadingDocs(true);
     try {
       const cleanMob = riderMobile.replace(/\D/g, '').slice(-10);
-      const res: any = await api.get(`/renters/documents?mobile=${encodeURIComponent(cleanMob || riderMobile)}&id=${encodeURIComponent(riderId)}&name=${encodeURIComponent(riderName)}`);
+      const qZone = activeZone && activeZone !== 'All Zones' ? `&zone=${encodeURIComponent(activeZone)}` : '';
+      const res: any = await api.get(`/renters/documents?mobile=${encodeURIComponent(cleanMob || riderMobile)}&id=${encodeURIComponent(riderId)}&name=${encodeURIComponent(riderName)}${qZone}`);
       const payload = res?.data || res;
       const folders = payload?.folders || payload?.data?.folders;
       if (folders && Array.isArray(folders)) setFolderData(folders);
@@ -1263,11 +1301,20 @@ function RiderProfileContent() {
   const fetchRiderRides = async () => {
     try {
       const cleanMob = riderMobile.replace(/\D/g, '').slice(-10);
-      const res: any = await api.get(`/reservations?mobile=${encodeURIComponent(cleanMob || riderMobile)}`);
+      const qZone = activeZone && activeZone !== 'All Zones' ? `&zone=${encodeURIComponent(activeZone)}` : '';
+      const res: any = await api.get(`/reservations?mobile=${encodeURIComponent(cleanMob || riderMobile)}${qZone}`);
       if (res && (res.data || res.reservations)) {
-        setRiderRides(res.data || res.reservations || []);
+        let rList = res.data || res.reservations || [];
+        if (activeZone && activeZone !== 'All Zones') {
+          const azClean = activeZone.replace(/zone|hub|-/gi, '').trim().toLowerCase();
+          rList = rList.filter((r: any) => {
+            const pz = (r.pickup_zone || r.drop_zone || r.zone || '').toLowerCase();
+            return pz.includes(azClean) || azClean.includes(pz);
+          });
+        }
+        setRiderRides(rList);
       }
-      const txRes: any = await api.get(`/wallet/transactions?mobile=${encodeURIComponent(cleanMob || riderMobile)}`);
+      const txRes: any = await api.get(`/wallet/transactions?mobile=${encodeURIComponent(cleanMob || riderMobile)}${qZone}`);
       if (txRes && (txRes.data || Array.isArray(txRes))) {
         setUserWalletTxs(txRes.data || txRes || []);
       }
@@ -1295,7 +1342,7 @@ function RiderProfileContent() {
     fetchRiderProfile();
     fetchFolderDocs();
     fetchRiderRides();
-  }, [riderMobile, riderId]);
+  }, [riderMobile, riderId, activeZone]);
 
   // ═══════════════ REAL DATA COMPUTATION ═══════════════
 

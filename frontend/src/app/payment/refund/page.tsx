@@ -212,11 +212,49 @@ export default function DepositRefundPage() {
   const [refundNotes, setRefundNotes] = useState('');
   const [processing, setProcessing] = useState(false);
 
+  const getInitialZone = (): string => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('evegah_active_zone');
+      if (saved && saved !== 'All Zones') return saved;
+      const userStr = localStorage.getItem('evegah_user');
+      if (userStr) {
+        try {
+          const u = JSON.parse(userStr);
+          const r = (u.role || '').toLowerCase();
+          if ((r.includes('zone') || r.includes('franchise') || r.includes('employee')) && u.zone && u.zone !== 'All Zones') {
+            return u.zone;
+          }
+        } catch (_) {}
+      }
+    }
+    return 'All Zones';
+  };
+
+  const [selectedZone, setSelectedZone] = useState<string>(getInitialZone);
+
+  // Sync with global active zone
+  useEffect(() => {
+    const updateZone = () => {
+      if (typeof window !== 'undefined') {
+        const z = getInitialZone();
+        setSelectedZone(z);
+      }
+    };
+    updateZone();
+    window.addEventListener('evegah_active_zone_changed', updateZone);
+    window.addEventListener('evegah_zone_changed', updateZone);
+    return () => {
+      window.removeEventListener('evegah_active_zone_changed', updateZone);
+      window.removeEventListener('evegah_zone_changed', updateZone);
+    };
+  }, []);
+
   // Fetch live deposits data from backend
   const fetchDeposits = async () => {
     setLoading(true);
     try {
-      const res: any = await api.get('/reservations/deposits');
+      const qZone = selectedZone && selectedZone !== 'All Zones' ? `?zone=${encodeURIComponent(selectedZone)}` : '';
+      const res: any = await api.get(`/reservations/deposits${qZone}`);
       if (res && res.status === 'success') {
         if (res.kpis) setKpis(res.kpis);
         if (res.data) {
@@ -233,7 +271,7 @@ export default function DepositRefundPage() {
 
   useEffect(() => {
     fetchDeposits();
-  }, []);
+  }, [selectedZone]);
 
   const openRefundModal = (r: PendingRefund) => {
     setSelectedPending(r);

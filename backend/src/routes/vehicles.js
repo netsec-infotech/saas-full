@@ -1085,57 +1085,29 @@ router.get('/', async (req, res) => {
   }
 
   try {
+    // 1. Fetch active rides in a fast bulk query instead of per-row LATERAL joins
+    const activeRidesRes = await db.query(`
+      SELECT customer_name as rider_name, mobile, status, vehicle_number
+      FROM reservations
+      WHERE status IN ('Ongoing', 'Active Ride', 'In Ride') AND vehicle_number IS NOT NULL
+      UNION ALL
+      SELECT rider_name, mobile, status, vehicle_id as vehicle_number
+      FROM renters
+      WHERE status IN ('Active Ride', 'Ongoing', 'Retain Ride') AND vehicle_id IS NOT NULL
+    `).catch(() => ({ rows: [] }));
+
+    const activeMap = new Map();
+    for (const ar of activeRidesRes.rows) {
+      if (ar.vehicle_number) {
+        activeMap.set(String(ar.vehicle_number).trim().toLowerCase(), ar);
+      }
+    }
+
     let query = `
       SELECT 
         v.*,
-        COALESCE(
-          NULLIF(CASE WHEN v.vehicle_image LIKE 'blob:%' THEN NULL ELSE v.vehicle_image END, ''),
-          vm.main_image,
-          '/City-1.png'
-        ) AS vehicle_image,
-        vm.main_image AS model_main_image,
-        COALESCE(ar.rider_name, 'None (Available)') AS renter_name,
-        CASE 
-          WHEN v.vehicle_status IN ('Maintenance', 'Offline') THEN v.vehicle_status
-          WHEN ar.rider_name IS NOT NULL THEN 'In Ride'
-          ELSE 'Available'
-        END AS vehicle_status
+        COALESCE(v.evegah_model_name, v.vehicle_model, 'Evegah City') AS evegah_model_name
       FROM vehicles v
-      LEFT JOIN vehicle_models vm ON (
-        LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) = LOWER(TRIM(vm.name))
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%city%' AND LOWER(vm.name) LIKE '%city%')
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%mink%' AND LOWER(vm.name) LIKE '%mink%')
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%king%' AND LOWER(vm.name) LIKE '%king%')
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%nemo%' AND LOWER(vm.name) LIKE '%nemo%')
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%pro%' AND LOWER(vm.name) LIKE '%pro%')
-        OR (LOWER(TRIM(COALESCE(v.evegah_model_name, v.vehicle_model, ''))) LIKE '%fly%' AND LOWER(vm.name) LIKE '%fly%')
-      )
-      LEFT JOIN LATERAL (
-        SELECT 
-          customer_name AS rider_name,
-          mobile,
-          status
-        FROM (
-          SELECT customer_name, mobile, status, vehicle_number, created_at
-          FROM reservations
-          WHERE status IN ('Ongoing', 'Active Ride', 'In Ride')
-            AND (vehicle_number = v.code OR vehicle_number = v.registration_number)
-          UNION ALL
-          SELECT rider_name AS customer_name, mobile, status, vehicle_id AS vehicle_number, created_at
-          FROM renters ren
-          WHERE ren.status IN ('Active Ride', 'Ongoing', 'Retain Ride')
-            AND (ren.vehicle_id = v.code OR ren.vehicle_id = v.registration_number)
-            AND NOT EXISTS (
-              SELECT 1 FROM reservations past_res
-              WHERE (past_res.vehicle_number = v.code OR past_res.vehicle_number = v.registration_number)
-                AND past_res.status IN ('Completed', 'Cancelled')
-                AND past_res.returned_at IS NOT NULL
-                AND past_res.returned_at >= ren.created_at
-            )
-        ) active_rides
-        ORDER BY created_at DESC NULLS LAST
-        LIMIT 1
-      ) ar ON true
       WHERE 1 = 1
     `;
 
@@ -1156,41 +1128,30 @@ router.get('/', async (req, res) => {
     }
 
     // Model filter
-    if (model && String(model).trim()) {
+    if (model && String(model).trim() && String(model).trim().toLowerCase() !== 'all models') {
       query += `
         AND (
-          v.evegah_model_name ILIKE $${paramIndex}
-          OR v.vehicle_model ILIKE $${paramIndex}
+          LOWER(COALESCE(v.evegah_model_name, v.vehicle_model, '')) = LOWER($${paramIndex})
+          OR LOWER(COALESCE(v.evegah_model_name, v.vehicle_model, '')) LIKE LOWER($${paramIndex + 1})
         )
       `;
 
       params.push(
+        String(model).trim(),
         `%${String(model).trim()}%`
       );
 
-      paramIndex++;
+      paramIndex += 2;
     }
 
     // Status filter
-    if (status && String(status).trim()) {
-      if (String(status).trim().toLowerCase() === 'available') {
-        query += `
-          AND ar.rider_name IS NULL
-          AND v.vehicle_status NOT IN ('Maintenance', 'Offline')
-        `;
-      } else if (String(status).trim().toLowerCase() === 'in ride') {
-        query += `
-          AND ar.rider_name IS NOT NULL
-        `;
-      } else {
+    if (status && String(status).trim() && String(status).trim().toLowerCase() !== 'all') {
+      const st = String(status).trim().toLowerCase();
+      if (st !== 'available' && st !== 'in ride') {
         query += `
           AND LOWER(COALESCE(v.vehicle_status, '')) = LOWER($${paramIndex})
         `;
-
-        params.push(
-          String(status).trim()
-        );
-
+        params.push(String(status).trim());
         paramIndex++;
       }
     }
@@ -1204,8 +1165,34 @@ router.get('/', async (req, res) => {
       params
     );
 
-    const normalizedRows = result.rows.map(v => {
+    let normalizedRows = result.rows.map(v => {
       const cleanCode = v.code || (v.registration_number && v.registration_number !== '000' ? v.registration_number : '') || v.id;
+      const ar = activeMap.get(String(v.code || '').trim().toLowerCase()) || 
+                 activeMap.get(String(v.registration_number || '').trim().toLowerCase());
+
+      let vStatus = v.vehicle_status;
+      let renterName = 'None (Available)';
+      if (v.vehicle_status === 'Maintenance' || v.vehicle_status === 'Offline') {
+        vStatus = v.vehicle_status;
+      } else if (ar) {
+        vStatus = 'In Ride';
+        renterName = ar.rider_name || 'Rider';
+      } else {
+        vStatus = 'Available';
+      }
+
+      // Optimize payload: replace bulky multi-hundred-kilobyte inline base64 with static asset paths
+      let img = v.vehicle_image;
+      if (!img || img.startsWith('blob:') || (img.startsWith('data:') && img.length > 500)) {
+        const m = (v.evegah_model_name || v.vehicle_model || '').toLowerCase();
+        if (m.includes('king')) img = '/king.jpg';
+        else if (m.includes('nemo')) img = '/nemo.jpg';
+        else if (m.includes('mink')) img = '/mink.png';
+        else if (m.includes('pro')) img = '/pro-1.png';
+        else if (m.includes('fly')) img = '/fly-1.png';
+        else img = '/City-1.png';
+      }
+
       return {
         ...v,
         code: cleanCode,
@@ -1213,9 +1200,23 @@ router.get('/', async (req, res) => {
         reg_number: cleanCode,
         vehicle_code: cleanCode,
         model: v.evegah_model_name || v.vehicle_model || v.model || 'Evegah City',
-        battery_soc: v.battery_pct ?? v.battery_soc ?? 100
+        battery_soc: v.battery_pct ?? v.battery_soc ?? 100,
+        renter_name: renterName,
+        vehicle_status: vStatus,
+        vehicle_image: img,
+        model_main_image: img
       };
     });
+
+    // In-memory filter for computed in ride / available statuses
+    if (status && String(status).trim()) {
+      const st = String(status).trim().toLowerCase();
+      if (st === 'available') {
+        normalizedRows = normalizedRows.filter(r => r.vehicle_status === 'Available');
+      } else if (st === 'in ride') {
+        normalizedRows = normalizedRows.filter(r => r.vehicle_status === 'In Ride');
+      }
+    }
 
     const payload = {
       status: 'success',

@@ -214,8 +214,36 @@ router.get('/available-vehicles', async (req, res) => {
 // GET /api/reservations/deposits
 // ──────────────────────────────────────────────────────────────
 router.get('/deposits', async (req, res) => {
+  const rawZoneFilter = (req.query.zone || '').trim();
+  const callerRole = (req.headers['x-user-role'] || (req.user && req.user.role) || '').toLowerCase();
+  const callerZone = (req.headers['x-user-zone'] || (req.user && req.user.zone) || '').trim();
+  const isGlobalAdmin = callerRole.includes('super_admin') || 
+                        callerRole.includes('super admin') || 
+                        callerRole.includes('platform admin') || 
+                        callerRole === 'admin' ||
+                        callerRole === 'system';
+
+  let effectiveZone = rawZoneFilter;
+  if (!isGlobalAdmin && callerZone && callerZone.toLowerCase() !== 'all' && callerZone.toLowerCase() !== 'all zones') {
+    const callerAssigned = callerZone.split(',').map(z => z.trim()).filter(Boolean);
+    if (effectiveZone && effectiveZone.toLowerCase() !== 'all' && effectiveZone.toLowerCase() !== 'all zones') {
+      const isAllowed = callerAssigned.some(az => 
+        effectiveZone.toLowerCase().includes(az.toLowerCase()) || 
+        az.toLowerCase().includes(effectiveZone.toLowerCase())
+      );
+      if (!isAllowed) effectiveZone = callerZone;
+    } else {
+      effectiveZone = callerZone;
+    }
+  }
+
+  const isAllZones = !effectiveZone || 
+                     effectiveZone.toLowerCase() === 'all' || 
+                     effectiveZone.toLowerCase() === 'all zones' || 
+                     effectiveZone.toLowerCase() === 'all zones (multi-zone)';
+
   try {
-    const resResult = await db.query(`
+    let resQuery = `
       SELECT 
         id,
         reservation_id,
@@ -237,28 +265,50 @@ router.get('/deposits', async (req, res) => {
         returned_at,
         return_condition,
         return_notes,
+        pickup_zone,
+        drop_zone,
         created_at
       FROM reservations
-      ORDER BY COALESCE(returned_at, created_at) DESC
-    `);
+      WHERE 1=1
+    `;
 
-    const rentersResult = await db.query(`
+    const resParams = [];
+    if (!isAllZones) {
+      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
+      resQuery += ` AND (pickup_zone ILIKE $1 OR drop_zone ILIKE $1 OR pickup_zone ILIKE $2 OR drop_zone ILIKE $2)`;
+      resParams.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+    }
+    resQuery += ` ORDER BY COALESCE(returned_at, created_at) DESC`;
+
+    const resResult = await db.query(resQuery, resParams);
+
+    let renQuery = `
       SELECT 
-        id,
-        rider_name,
-        mobile,
-        vehicle_id,
-        battery_id,
-        deposit,
-        rent,
-        total,
-        status,
-        rental_start_date,
-        return_date,
-        created_at
-      FROM renters
-      WHERE deposit > 0
-    `).catch(() => ({ rows: [] }));
+        r.id,
+        r.rider_name,
+        r.mobile,
+        r.vehicle_id,
+        r.battery_id,
+        r.deposit,
+        r.rent,
+        r.total,
+        r.status,
+        r.rental_start_date,
+        r.return_date,
+        COALESCE(r.zone, v.zone, 'Gotri Zone') as zone,
+        r.created_at
+      FROM renters r
+      LEFT JOIN vehicles v ON (v.code = r.vehicle_id OR v.registration_number = r.vehicle_id)
+      WHERE r.deposit > 0
+    `;
+    const renParams = [];
+    if (!isAllZones) {
+      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
+      renQuery += ` AND (r.zone ILIKE $1 OR r.zone ILIKE $2 OR v.zone ILIKE $1 OR v.zone ILIKE $2 OR r.zone = 'Multiple Zones')`;
+      renParams.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+    }
+
+    const rentersResult = await db.query(renQuery, renParams).catch(() => ({ rows: [] }));
 
     const refundIdemRes = await db.query(`
       SELECT 

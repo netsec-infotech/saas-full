@@ -2099,14 +2099,23 @@ router.get('/documents', async (req, res) => {
   // 3. Fetch reservations for inspection or ID media
   let reservationDocs = [];
   if (effectiveLast10 || renter?.rider_name || riderNameQuery) {
-    const resvQ = await db.query(
-      `SELECT reservation_id, customer_name, vehicle_number, battery_id, package_type, status, fare, deposit,
-              id_card_url, inspection_media_url, created_at, pickup_datetime, drop_datetime, return_notes 
-       FROM reservations 
-       WHERE (mobile LIKE $1 OR customer_name ILIKE $2) 
-       ORDER BY created_at DESC LIMIT 20`,
-      [`%${effectiveLast10 || '0000000000'}`, `%${renter?.rider_name || riderNameQuery || '___'}%`]
-    ).catch(() => ({ rows: [] }));
+    const rawZone = (req.query.zone || '').trim();
+    const isAllZones = !rawZone || rawZone === 'All Zones' || rawZone === 'All' || rawZone.toLowerCase().includes('all zone');
+    let resvSql = `
+      SELECT reservation_id, customer_name, vehicle_number, battery_id, package_type, status, fare, deposit,
+             id_card_url, inspection_media_url, created_at, pickup_datetime, drop_datetime, return_notes, pickup_zone, drop_zone
+      FROM reservations 
+      WHERE (mobile LIKE $1 OR customer_name ILIKE $2)
+    `;
+    const resvParams = [`%${effectiveLast10 || '0000000000'}`, `%${renter?.rider_name || riderNameQuery || '___'}%`];
+    if (!isAllZones) {
+      const zClean = rawZone.replace(/zone|hub|-/gi, '').trim();
+      resvSql += ` AND (pickup_zone ILIKE $3 OR drop_zone ILIKE $3 OR pickup_zone ILIKE $4 OR drop_zone ILIKE $4)`;
+      resvParams.push(`%${rawZone}%`, `%${zClean}%`);
+    }
+    resvSql += ` ORDER BY created_at DESC LIMIT 20`;
+
+    const resvQ = await db.query(resvSql, resvParams).catch(() => ({ rows: [] }));
     reservationDocs = resvQ.rows;
   }
 
