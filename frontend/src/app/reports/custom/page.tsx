@@ -145,6 +145,39 @@ export default function CustomReportPage() {
     return () => window.removeEventListener('evegah_zone_changed', handleZoneChange);
   }, []);
 
+  const handleExportCSV = () => {
+    const rows = [
+      ['Evegah Mobility - Custom Analytics Report'],
+      ['Target Zone', selectedZone],
+      ['Metric Category', metricCategory],
+      ['Group By Dimension', groupBy],
+      ['Report Generated At', new Date().toLocaleString('en-IN')],
+      [],
+      ['--- CUSTOM KPI OVERVIEW ---'],
+      ['Zone', selectedZone],
+      ['Total Revenue', '₹4,85,600'],
+      ['Total Rentals', '1,420'],
+      ['Battery Swaps', '984'],
+      ['Fleet Utilization', '78.4%'],
+      [],
+      ['--- ZONE METRICS BREAKDOWN ---'],
+      ['Zone Name', 'Period', 'Active Fleet', 'Rentals Count', 'Battery Swaps', 'Gross Revenue (INR)', 'Status'],
+      ['Gotri Zone', 'Jul 2026', '180 EV', '420', '284', '185400', 'Verified'],
+      ['Aatapi Zone', 'Jul 2026', '145 EV', '380', '240', '142800', 'Verified'],
+      ['Manjalpur Zone', 'Jul 2026', '160 EV', '410', '310', '157400', 'Verified'],
+      ['Daman SF', 'Jul 2026', '16 EV', '2', '4', '1399', 'Verified']
+    ];
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Evegah_Custom_Report_${selectedZone.replace(/\s+/g, '_')}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -165,7 +198,7 @@ export default function CustomReportPage() {
                   <span>01 Jul 2026 - 31 Jul 2026</span>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
                 </div>
-                <button className="sa-export-btn" onClick={() => alert('Custom Report Exported to CSV!')}>
+                <button className="sa-export-btn" onClick={handleExportCSV}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   Export CSV
                 </button>
@@ -184,6 +217,7 @@ export default function CustomReportPage() {
                     <option value="KPGU Zone">KPGU Zone</option>
                     <option value="Aatapi Zone">Aatapi Zone</option>
                     <option value="Moti Daman Zone">Moti Daman Zone</option>
+                    <option value="Daman SF">Daman SF</option>
                   </select>
                 </div>
 

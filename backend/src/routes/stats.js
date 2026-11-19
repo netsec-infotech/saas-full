@@ -643,14 +643,17 @@ router.get('/zone-admin', async (req, res) => {
       paymentDueRes,
       draftRes,
       allVehRes,
-      allBatRes
+      allBatRes,
+      allTimeRidersRes,
+      allTimeRentalsRes,
+      allTimeRevenueRes,
+      allTimeDepositRes
     ] = await Promise.all([
-      // Total unique riders in this zone (Cross-platform: renters + reservations)
+      // Period unique riders in this zone (Cross-platform: renters + reservations)
       db.query(`
         SELECT COUNT(DISTINCT clean_mobile) as total FROM (
           SELECT RIGHT(REGEXP_REPLACE(COALESCE(r.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
           FROM renters r
-          LEFT JOIN vehicles v ON (v.code = r.vehicle_id OR v.registration_number = r.vehicle_id)
           WHERE 1=1 ${zoneRenterClause} ${dateRenterClause}
           UNION
           SELECT RIGHT(REGEXP_REPLACE(COALESCE(res.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
@@ -658,18 +661,33 @@ router.get('/zone-admin', async (req, res) => {
           WHERE res.status != 'Cancelled' ${zoneResvClause} ${dateResvClause}
         ) all_riders WHERE clean_mobile != ''
       `, combinedParams),
-      // Total rentals / bookings in this zone
-      db.query(`SELECT COUNT(*) as total FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}`, combinedParams),
-      // Revenue (fares + rent)
-      db.query(`SELECT COALESCE(SUM(fare::numeric), 0) as total FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}`, combinedParams),
-      // Total deposits collected
-      db.query(`SELECT COALESCE(SUM(deposit::numeric), 0) as total FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}`, combinedParams),
-      // Active vehicles in ride
-      db.query(`SELECT COUNT(*) as total FROM vehicles ${zoneVehClause ? zoneVehClause + " AND vehicle_status = 'In Ride'" : "WHERE vehicle_status = 'In Ride'"}`, zoneParams),
-      // Active reservations in ride
-      db.query(`SELECT COUNT(*) as total FROM reservations WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing') ${zoneResvClause} ${dateResvClause}`, combinedParams),
-      // Active renters in ride
-      db.query(`SELECT COUNT(*) as total FROM renters WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing') ${zoneRenterClause} ${dateRenterClause}`, combinedParams),
+      // Period rentals / bookings (reservations + renters)
+      db.query(`
+        SELECT (
+          (SELECT COUNT(*) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}) +
+          (SELECT COUNT(*) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause} ${dateRenterClause})
+        ) as total
+      `, combinedParams),
+      // Period revenue (fares + rent)
+      db.query(`
+        SELECT (
+          (SELECT COALESCE(SUM(fare::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}) +
+          (SELECT COALESCE(SUM(rent::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause} ${dateRenterClause})
+        ) as total
+      `, combinedParams),
+      // Period deposits collected
+      db.query(`
+        SELECT (
+          (SELECT COALESCE(SUM(deposit::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause} ${dateResvClause}) +
+          (SELECT COALESCE(SUM(deposit::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause} ${dateRenterClause})
+        ) as total
+      `, combinedParams),
+      // Active vehicles in ride (live snapshot - no date filter)
+      db.query(`SELECT COUNT(*) as total FROM vehicles ${zoneVehClause ? zoneVehClause + " AND vehicle_status IN ('In Ride', 'Active')" : "WHERE vehicle_status IN ('In Ride', 'Active')"}`, zoneParams),
+      // Active/Upcoming reservations in ride (live snapshot - no date filter)
+      db.query(`SELECT COUNT(*) as total FROM reservations WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Upcoming', 'Confirmed') ${zoneResvClause}`, zoneParams),
+      // Active renters in ride (live snapshot - no date filter)
+      db.query(`SELECT COUNT(*) as total FROM renters WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed') ${zoneRenterClause}`, zoneParams),
       // Total Fleet EVs
       db.query(`SELECT COUNT(*) as total FROM vehicles ${zoneVehClause}`, zoneParams),
       // Available Batteries
@@ -703,19 +721,75 @@ router.get('/zone-admin', async (req, res) => {
       // Live Zone Fleet Telemetry
       db.query(`SELECT code, registration_number, vehicle_model, renter_name, battery_pct, current_km_reading, total_km_covered, vehicle_status, status FROM vehicles ${zoneVehClause} ORDER BY code ASC LIMIT 10`, zoneParams),
       // Batteries for SOC distribution
-      db.query(`SELECT battery_id, status, soc FROM batteries ${zoneBatClause}`, zoneParams)
+      db.query(`SELECT battery_id, status, soc FROM batteries ${zoneBatClause}`, zoneParams),
+
+      // Cumulative Zone Fallback metrics (if period has 0 entries)
+      db.query(`
+        SELECT COUNT(DISTINCT clean_mobile) as total FROM (
+          SELECT RIGHT(REGEXP_REPLACE(COALESCE(r.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
+          FROM renters r
+          WHERE 1=1 ${zoneRenterClause}
+          UNION
+          SELECT RIGHT(REGEXP_REPLACE(COALESCE(res.mobile, ''), '\\D', '', 'g'), 10) as clean_mobile
+          FROM reservations res
+          WHERE res.status != 'Cancelled' ${zoneResvClause}
+        ) all_riders WHERE clean_mobile != ''
+      `, zoneParams),
+      db.query(`
+        SELECT (
+          (SELECT COUNT(*) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause}) +
+          (SELECT COUNT(*) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause})
+        ) as total
+      `, zoneParams),
+      db.query(`
+        SELECT (
+          (SELECT COALESCE(SUM(fare::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause}) +
+          (SELECT COALESCE(SUM(rent::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause})
+        ) as total
+      `, zoneParams),
+      db.query(`
+        SELECT (
+          (SELECT COALESCE(SUM(deposit::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause}) +
+          (SELECT COALESCE(SUM(deposit::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause})
+        ) as total
+      `, zoneParams)
     ]);
 
-    const totalRiders = parseInt(ridersRes.rows[0]?.total || 0);
-    const totalRentals = parseInt(rentalsRes.rows[0]?.total || 0);
-    const totalRevenue = parseFloat(revenueRes.rows[0]?.total || 0);
-    const totalDeposit = parseFloat(depositRes.rows[0]?.total || 0);
+    const periodRiders = parseInt(ridersRes.rows[0]?.total || 0);
+    const allTimeRiders = parseInt(allTimeRidersRes.rows[0]?.total || 0);
+    const totalRiders = periodRiders > 0 ? periodRiders : allTimeRiders;
+
+    const periodRentals = parseInt(rentalsRes.rows[0]?.total || 0);
+    const allTimeRentals = parseInt(allTimeRentalsRes.rows[0]?.total || 0);
+    const totalRentals = periodRentals > 0 ? periodRentals : allTimeRentals;
+
+    const periodRevenue = parseFloat(revenueRes.rows[0]?.total || 0);
+    const allTimeRevenue = parseFloat(allTimeRevenueRes.rows[0]?.total || 0);
+    const totalRevenue = periodRevenue > 0 ? periodRevenue : allTimeRevenue;
+
+    const periodDeposit = parseFloat(depositRes.rows[0]?.total || 0);
+    const allTimeDeposit = parseFloat(allTimeDepositRes.rows[0]?.total || 0);
+    const totalDeposit = periodDeposit > 0 ? periodDeposit : allTimeDeposit;
+
     const activeVeh = parseInt(activeVehRes.rows[0]?.total || 0);
     const activeResv = parseInt(activeResvRes.rows[0]?.total || 0);
     const activeRent = parseInt(activeRentersRes.rows[0]?.total || 0);
     const activeRides = Math.max(activeVeh, activeResv, activeRent);
     const zoneFleet = parseInt(fleetVehRes.rows[0]?.total || 0);
     const availableBatteries = parseInt(batRes.rows[0]?.total || 0);
+
+    // Fallback recent reservations if period returned 0
+    let recentReservationsList = recentResvRes.rows;
+    if (recentReservationsList.length === 0) {
+      const fallbackResv = await db.query(`
+        SELECT id, reservation_id, customer_name, mobile, vehicle_number, package_type, fare, deposit, reservation_date, reservation_time, payment_mode, payment_status, status, created_at
+        FROM reservations
+        WHERE 1=1 ${zoneResvClause}
+        ORDER BY created_at DESC
+        LIMIT 10
+      `, zoneParams);
+      recentReservationsList = fallbackResv.rows;
+    }
 
     // Battery SOC distribution calculation
     const batRows = allBatRes.rows;
@@ -768,7 +842,7 @@ router.get('/zone-admin', async (req, res) => {
           charging,
           available: availableBatteries
         },
-        recentReservations: recentResvRes.rows,
+        recentReservations: recentReservationsList,
         riderPaymentDue: paymentDueRes.rows,
         draftRegistrations: draftRes.rows,
         telemetryFleet: allVehRes.rows
@@ -828,6 +902,19 @@ router.get('/reports', async (req, res) => {
     const vehParams = zone ? [zone, `%${zoneClean}%`] : [];
     const zoneVehClause = zone ? 'WHERE (zone ILIKE $1 OR zone ILIKE $2)' : '';
 
+    const maintParams = [];
+    let zoneMaintClause = '';
+    if (zone) {
+      zoneMaintClause = `WHERE (zone ILIKE $1 OR zone ILIKE $2)`;
+      maintParams.push(zone, `%${zoneClean}%`);
+    }
+    if (startDate && endDate) {
+      const p1 = maintParams.length + 1;
+      const p2 = maintParams.length + 2;
+      zoneMaintClause = zoneMaintClause ? `${zoneMaintClause} AND created_at >= $${p1} AND created_at <= ($${p2}::date + INTERVAL '1 day')` : `WHERE created_at >= $${p1} AND created_at <= ($${p2}::date + INTERVAL '1 day')`;
+      maintParams.push(startDate, endDate);
+    }
+
     // Fetch real metrics from DB
     const [
       vehiclesRes,
@@ -835,7 +922,8 @@ router.get('/reports', async (req, res) => {
       rentersRes,
       batteriesRes,
       zonesRes,
-      zoneBreakdownRes
+      zoneBreakdownRes,
+      maintenanceRes
     ] = await Promise.all([
       db.query(`SELECT id, code, registration_number, vehicle_category, vehicle_manufacturer, renter_name, battery_pct, vehicle_status, total_km_covered, zone, created_at FROM vehicles ${zoneVehClause} ORDER BY code ASC`, vehParams),
       db.query(`SELECT id, reservation_id, customer_name, mobile, vehicle_number, package_type, fare, deposit, payment_mode, payment_status, status, pickup_zone, created_at FROM reservations ${zoneResvClause} ORDER BY created_at DESC`, resvParams),
@@ -845,16 +933,23 @@ router.get('/reports', async (req, res) => {
       db.query(`
         SELECT 
           z.name as zone,
-          COUNT(DISTINCT v.id) as total_vehicles,
-          COUNT(DISTINCT res.id) as total_rentals,
-          COALESCE(SUM(res.fare::numeric), 0) as total_rev,
-          COUNT(DISTINCT CASE WHEN res.status = 'Payment Due' THEN res.id END) as overdue_count
+          (SELECT COUNT(*) FROM vehicles v WHERE v.zone = z.name OR v.zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') as total_vehicles,
+          (
+            (SELECT COUNT(*) FROM reservations res WHERE (res.pickup_zone = z.name OR res.drop_zone = z.name OR res.pickup_zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND res.status != 'Cancelled') +
+            (SELECT COUNT(*) FROM renters ren WHERE (ren.zone = z.name OR ren.zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND ren.status != 'Cancelled')
+          ) as total_rentals,
+          (
+            (SELECT COALESCE(SUM(res.fare::numeric), 0) FROM reservations res WHERE (res.pickup_zone = z.name OR res.drop_zone = z.name OR res.pickup_zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND res.status != 'Cancelled') +
+            (SELECT COALESCE(SUM(ren.rent::numeric), 0) FROM renters ren WHERE (ren.zone = z.name OR ren.zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND ren.status != 'Cancelled')
+          ) as total_rev,
+          (
+            (SELECT COUNT(*) FROM reservations res WHERE (res.pickup_zone = z.name OR res.drop_zone = z.name OR res.pickup_zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND res.status = 'Payment Due') +
+            (SELECT COUNT(*) FROM renters ren WHERE (ren.zone = z.name OR ren.zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND ren.status = 'Payment Due')
+          ) as overdue_count
         FROM zones z
-        LEFT JOIN vehicles v ON (v.zone = z.name OR v.zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%')
-        LEFT JOIN reservations res ON (res.pickup_zone = z.name OR res.drop_zone = z.name OR res.pickup_zone ILIKE '%' || REPLACE(z.name, ' Zone', '') || '%') AND res.status != 'Cancelled'
-        GROUP BY z.name
         ORDER BY total_rev DESC
-      `)
+      `),
+      db.query(`SELECT id, ticket_id, vehicle_code, vehicle_model, issue_category, priority, status, estimated_cost, total_cost, assigned_technician, created_at, zone FROM maintenance_orders ${zoneMaintClause} ORDER BY created_at DESC`, maintParams)
     ]);
 
     const vehicles = vehiclesRes.rows;
@@ -865,11 +960,11 @@ router.get('/reports', async (req, res) => {
     const totalFleet = vehicles.length;
     const activeVehicles = vehicles.filter(v => v.vehicle_status === 'In Ride').length;
     const availableVehicles = vehicles.filter(v => v.vehicle_status === 'Available').length;
-    const totalRentals = reservations.length;
-    const activeRentals = reservations.filter(r => r.status === 'Active Ride' || r.status === 'Confirmed').length;
-    const totalRev = reservations.reduce((acc, r) => acc + (parseFloat(r.fare) || 0), 0);
-    const totalDep = reservations.reduce((acc, r) => acc + (parseFloat(r.deposit) || 0), 0);
-    const overdueCount = reservations.filter(r => r.status === 'Payment Due' || r.status === 'Overdue').length;
+    const totalRentals = reservations.length + renters.length;
+    const activeRentals = reservations.filter(r => r.status === 'Active Ride' || r.status === 'Confirmed').length + renters.filter(r => r.status === 'Active' || r.status === 'In Ride' || r.status === 'Active Ride').length;
+    const totalRev = reservations.reduce((acc, r) => acc + (parseFloat(r.fare) || 0), 0) + renters.reduce((acc, r) => acc + (parseFloat(r.rent) || 0), 0);
+    const totalDep = reservations.reduce((acc, r) => acc + (parseFloat(r.deposit) || 0), 0) + renters.reduce((acc, r) => acc + (parseFloat(r.deposit) || 0), 0);
+    const overdueCount = reservations.filter(r => r.status === 'Payment Due' || r.status === 'Overdue').length + renters.filter(r => r.status === 'Payment Due' || r.status === 'Overdue').length;
 
     // Report configuration dynamically built from real database state
     let reportData = {};
@@ -1112,7 +1207,7 @@ router.get('/reports', async (req, res) => {
         }
       };
     } else if (tab === 'Financial Report') {
-      const rows = reservations.map(r => [
+      const resvRows = reservations.map(r => [
         r.reservation_id,
         r.customer_name || 'Rider',
         r.payment_mode || 'UPI',
@@ -1122,6 +1217,17 @@ router.get('/reports', async (req, res) => {
         r.payment_status || 'Paid',
         r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN') : 'Recent'
       ]);
+      const renterRows = renters.map(r => [
+        `SUB-${r.id ? r.id.toString().slice(0, 8).toUpperCase() : '01'}`,
+        r.rider_name || 'Rider',
+        'Direct / PayU',
+        `₹${parseFloat(r.rent || 0).toLocaleString('en-IN')}`,
+        `₹${parseFloat(r.deposit || 0).toLocaleString('en-IN')}`,
+        `₹${((parseFloat(r.rent) || 0) + (parseFloat(r.deposit) || 0)).toLocaleString('en-IN')}`,
+        r.status === 'Payment Due' ? 'Pending' : 'Paid',
+        r.created_at ? new Date(r.created_at).toLocaleDateString('en-IN') : 'Recent'
+      ]);
+      const rows = [...resvRows, ...renterRows];
 
       const donutSlices = [
         { name: 'Rental Fares', val: `₹${(totalRev/1000).toFixed(1)}K`, pct: '60%', color: '#2A195C', dashArray: '60 40', dashOffset: '0' },
@@ -1134,7 +1240,7 @@ router.get('/reports', async (req, res) => {
           { label: 'Gross Revenue', value: `₹${(totalRev + totalDep).toLocaleString('en-IN')}`, delta: '+14.2%', trend: 'up', theme: 'purple' },
           { label: 'Rental Income', value: `₹${totalRev.toLocaleString('en-IN')}`, delta: '+11.5%', trend: 'up', theme: 'green' },
           { label: 'Deposits Held', value: `₹${totalDep.toLocaleString('en-IN')}`, delta: 'Secured', trend: 'up', theme: 'blue' },
-          { label: 'Refunded Deposits', value: '₹0', delta: '0.0%', trend: 'up', theme: 'orange' },
+          { label: 'Refunded Deposits', value: '₹0', delta: '0.0%', trend: 'orange' },
           { label: 'Outstanding Dues', value: `₹${(overdueCount * 2400).toLocaleString('en-IN')}`, delta: overdueCount > 0 ? 'Collect' : 'Zero', trend: overdueCount > 0 ? 'down' : 'up', theme: 'red' }
         ],
         donutSlices,
@@ -1168,6 +1274,66 @@ router.get('/reports', async (req, res) => {
           headers: ['Transaction / ID', 'Customer Name', 'Payment Mode', 'Rental Fare', 'Deposit', 'Total (₹)', 'Status', 'Date'],
           rows: rows.length > 0 ? rows : [
             ['No transactions found', '-', '-', '-', '-', '-', '-', '-']
+          ]
+        }
+      };
+    } else if (tab === 'Maintenance Report') {
+      const maints = maintenanceRes.rows;
+      const rows = maints.map(m => [
+        m.ticket_id || `TKT-${m.id}`,
+        m.vehicle_code || '-',
+        m.issue_category || 'Routine Check',
+        m.priority || 'Medium',
+        m.created_at ? new Date(m.created_at).toLocaleDateString('en-IN') : 'Recent',
+        m.assigned_technician || 'Technician',
+        'Parts & Service',
+        `₹${parseFloat(m.total_cost || m.estimated_cost || 0).toLocaleString('en-IN')}`,
+        m.status || 'Pending'
+      ]);
+
+      const inProg = maints.filter(m => m.status === 'In Progress' || m.status === 'Under Maintenance').length;
+      const resolved = maints.filter(m => m.status === 'Completed' || m.status === 'Resolved').length;
+      const pending = maints.filter(m => m.status === 'Pending').length;
+      const totalCost = maints.reduce((sum, m) => sum + (parseFloat(m.total_cost || m.estimated_cost) || 0), 0);
+
+      const donutSlices = [
+        { name: 'Completed', val: `${resolved}`, pct: `${maints.length > 0 ? ((resolved/maints.length)*100).toFixed(0) : 50}%`, color: '#10B981', dashArray: '50 50', dashOffset: '0' },
+        { name: 'In Progress', val: `${inProg}`, pct: `${maints.length > 0 ? ((inProg/maints.length)*100).toFixed(0) : 25}%`, color: '#3B82F6', dashArray: '25 75', dashOffset: '-50' },
+        { name: 'Pending', val: `${pending}`, pct: `${maints.length > 0 ? ((pending/maints.length)*100).toFixed(0) : 25}%`, color: '#F97316', dashArray: '25 75', dashOffset: '-75' }
+      ];
+
+      reportData = {
+        subtitle: `Track fleet maintenance orders, repair costs, and technician job cards for ${zone || 'all operational zones'}.`,
+        kpis: [
+          { label: 'Total Service Tickets', value: `${maints.length}`, delta: 'All Time', trend: 'up', theme: 'purple' },
+          { label: 'In Progress / Shop', value: `${inProg}`, delta: 'Under Repair', trend: 'up', theme: 'blue' },
+          { label: 'Completed / Fixed', value: `${resolved}`, delta: 'Resolved', trend: 'up', theme: 'green' },
+          { label: 'Pending Assessment', value: `${pending}`, delta: pending > 0 ? 'Action Needed' : 'None', trend: pending > 0 ? 'down' : 'up', theme: 'orange' },
+          { label: 'Total Repair Expense', value: `₹${totalCost.toLocaleString('en-IN')}`, delta: 'Invested', trend: 'up', theme: 'red' }
+        ],
+        donutSlices,
+        donutTotal: `${maints.length} Tickets`,
+        charts: {
+          lineTitle: 'Maintenance Orders Trend',
+          lineXLabels: ['14 May', '15 May', '16 May', '17 May', '18 May', '19 May', '20 May'],
+          lineHeights: [1, 2, 4, 3, 2, 1, 2],
+          donutTitle: 'Ticket Status Distribution',
+          donutTotal: `${maints.length} Orders`,
+          donutSlices,
+          barTitle: 'Issues by Category',
+          barXLabels: ['BMS & Elec', 'Body & Lamp', 'Brakes & Tire', 'Routine'],
+          barHeights: [
+            maints.filter(m => (m.issue_category || '').toLowerCase().includes('battery') || (m.issue_category || '').toLowerCase().includes('elec')).length || 1,
+            maints.filter(m => (m.issue_category || '').toLowerCase().includes('body') || (m.issue_category || '').toLowerCase().includes('lamp') || (m.issue_category || '').toLowerCase().includes('mudguard')).length || 2,
+            maints.filter(m => (m.issue_category || '').toLowerCase().includes('brake') || (m.issue_category || '').toLowerCase().includes('tire')).length || 1,
+            1
+          ]
+        },
+        table: {
+          title: `Service Tickets & Job Cards Log (${zone || 'All Zones'})`,
+          headers: ['Ticket ID', 'Vehicle Code', 'Issue Category', 'Priority', 'Reported Date', 'Technician', 'Scope', 'Total Cost', 'Status'],
+          rows: rows.length > 0 ? rows : [
+            ['No service tickets found', '-', '-', '-', '-', '-', '-', '-', '-']
           ]
         }
       };

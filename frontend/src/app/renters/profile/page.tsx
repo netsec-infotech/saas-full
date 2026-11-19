@@ -866,7 +866,7 @@ const CSS = `
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid var(--line);
 }
-.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; padding: 16px; background: #fff; }
+.folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; padding: 16px; background: #fff; }
 .doc-card {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -2814,16 +2814,20 @@ function RiderProfileContent() {
                                       </div>
                                       <div>
                                         <div className="doc-card-tit">{doc.doc_name}</div>
-                                        <div className="doc-card-sub">Uploaded: {doc.date || 'Recent'}</div>
                                       </div>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                                        <span className={`status-tag ${doc.status === 'Verified' ? 'verified' : 'pending'}`}>
-                                          {doc.status || 'Verified'}
-                                        </span>
-                                        <div style={{ display: 'flex', gap: '6px' }}>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '2px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <span className={`status-tag ${doc.status === 'Verified' ? 'verified' : 'pending'}`}>
+                                            {doc.status || 'Verified'}
+                                          </span>
+                                          <span className="doc-card-sub" style={{ fontSize: '10.5px' }}>
+                                            {doc.date ? `Uploaded: ${doc.date}` : 'Uploaded: Recent'}
+                                          </span>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', width: '100%' }}>
                                           <button 
                                             className="rp-pg-btn" 
-                                            style={{ width: 'auto', padding: '0 8px', fontSize: '10.5px', height: '24px' }} 
+                                            style={{ flex: 1, padding: '0 6px', fontSize: '11px', height: '26px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} 
                                             onClick={() => setPreviewDoc({ ...doc, folder_name: doc.folder_name || `Ride #${rideId}` })}
                                           >
                                             View
@@ -2835,14 +2839,14 @@ function RiderProfileContent() {
                                               rel="noopener noreferrer"
                                               download
                                               className="rp-pg-btn" 
-                                              style={{ width: 'auto', padding: '0 8px', fontSize: '10.5px', height: '24px', textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                                              style={{ flex: 1, padding: '0 6px', fontSize: '11px', height: '26px', fontWeight: 600, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                             >
                                               Download
                                             </a>
                                           )}
                                           <button
                                             className="rp-pg-btn"
-                                            style={{ width: 'auto', padding: '0 8px', fontSize: '10.5px', height: '24px', color: '#EF4444', borderColor: 'rgba(239,68,68,0.25)', background: '#FEF2F2' }}
+                                            style={{ flex: 1, padding: '0 6px', fontSize: '11px', height: '26px', fontWeight: 600, color: '#EF4444', borderColor: 'rgba(239,68,68,0.25)', background: '#FEF2F2', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                                             onClick={() => handleDeleteDoc(doc, doc.folder_name)}
                                             title="Delete document"
                                           >

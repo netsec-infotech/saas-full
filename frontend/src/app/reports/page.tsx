@@ -565,10 +565,17 @@ export default function ReportsPage() {
     'Manjalpur Zone',
     'KPGU Zone',
     'Aatapi Zone',
-    'Moti Daman Zone'
+    'Moti Daman Zone',
+    'Daman SF'
   ]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [datePreset, setDatePreset] = useState('This Month');
+  const [reportSubtype, setReportSubtype] = useState('Performance Summary');
+  const [statusFilter, setStatusFilter] = useState('All Statuses');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const [liveReport, setLiveReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
@@ -657,10 +664,66 @@ export default function ReportsPage() {
     if (selectedZone) {
       fetchReport(selectedZone, activeTab, startDate, endDate);
     }
+    setCurrentPage(1);
   }, [selectedZone, activeTab]);
+
+  const handlePresetChange = (preset: string) => {
+    setDatePreset(preset);
+    const now = new Date();
+    let s = '';
+    let e = '';
+
+    if (preset === 'Today') {
+      s = toYMD(now);
+      e = toYMD(now);
+    } else if (preset === 'Yesterday') {
+      const y = new Date(now);
+      y.setDate(y.getDate() - 1);
+      s = toYMD(y);
+      e = toYMD(y);
+    } else if (preset === 'This Week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.setDate(diff));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      s = toYMD(monday);
+      e = toYMD(sunday);
+    } else if (preset === 'This Month') {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      s = toYMD(first);
+      e = toYMD(last);
+    } else if (preset === 'Last 30 Days') {
+      const past = new Date(now);
+      past.setDate(past.getDate() - 30);
+      s = toYMD(past);
+      e = toYMD(now);
+    } else if (preset === 'This Quarter') {
+      const q = Math.floor(now.getMonth() / 3);
+      const first = new Date(now.getFullYear(), q * 3, 1);
+      const last = new Date(now.getFullYear(), q * 3 + 3, 0);
+      s = toYMD(first);
+      e = toYMD(last);
+    } else if (preset === 'Year to Date') {
+      const first = new Date(now.getFullYear(), 0, 1);
+      s = toYMD(first);
+      e = toYMD(now);
+    } else if (preset === 'All Time') {
+      s = '';
+      e = '';
+    }
+    setStartDate(s);
+    setEndDate(e);
+    if (selectedZone) {
+      fetchReport(selectedZone, activeTab, s, e);
+    }
+    setCurrentPage(1);
+  };
 
   const handleApplyFilters = () => {
     fetchReport(selectedZone, activeTab, startDate, endDate);
+    setCurrentPage(1);
   };
 
   const handleResetFilters = () => {
@@ -671,6 +734,11 @@ export default function ReportsPage() {
     const e = toYMD(last);
     setStartDate(s);
     setEndDate(e);
+    setDatePreset('This Month');
+    setStatusFilter('All Statuses');
+    setSearchTerm('');
+    setReportSubtype('Performance Summary');
+    setCurrentPage(1);
     const defaultZone = localStorage.getItem('evegah_user_zone') || 'Manjalpur Zone';
     setSelectedZone(defaultZone);
     fetchReport(defaultZone, activeTab, s, e);
@@ -696,12 +764,66 @@ export default function ReportsPage() {
   };
   const activeTable = liveReport?.table || currentTabConfig.table;
 
+  // Filter rows based on search term and status filter
+  const filteredRows = (activeTable.rows || []).filter((row: any[]) => {
+    // Status filter
+    if (statusFilter !== 'All Statuses') {
+      const rowStr = row.join(' ').toLowerCase();
+      const filterLower = statusFilter.toLowerCase();
+      if (filterLower.includes('active') && !rowStr.includes('active')) return false;
+      if (filterLower.includes('complete') && !rowStr.includes('complete') && !rowStr.includes('resolved') && !rowStr.includes('paid')) return false;
+      if (filterLower.includes('pending') && !rowStr.includes('pending') && !rowStr.includes('progress') && !rowStr.includes('review') && !rowStr.includes('due')) return false;
+      if (filterLower.includes('due') && !rowStr.includes('due') && !rowStr.includes('overdue')) return false;
+      if (filterLower.includes('cancel') && !rowStr.includes('cancel') && !rowStr.includes('draft')) return false;
+      if (filterLower.includes('avail') && !rowStr.includes('avail')) return false;
+    }
+    // Search keyword filter
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      const match = row.some(cell => String(cell).toLowerCase().includes(q));
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const displayedRows = filteredRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  const handleExportCSV = () => {
+    if (!activeTable || !activeTable.headers || !activeTable.rows) return;
+    const rows = [
+      [`Evegah Mobility - ${activeTab}`],
+      ['Operational Zone', selectedZone],
+      ['Date Range', `${startDate || 'All Time'} to ${endDate || 'Present'}`],
+      ['Report Subtype', reportSubtype],
+      ['Status Filter', statusFilter],
+      ['Generated At', new Date().toLocaleString('en-IN')],
+      [],
+      ['--- KPI METRICS SUMMARY ---'],
+      ['Metric', 'Value', 'Change / Status'],
+      ...activeKpis.map((k: any) => [k.label, `"${k.value}"`, k.delta || '']),
+      [],
+      [`--- ${activeTable.title || 'REPORT DATA TABLE'} --- `],
+      activeTable.headers,
+      ...filteredRows.map((r: any[]) => r.map(c => typeof c === 'string' && c.includes(',') ? `"${c}"` : c))
+    ];
+
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Evegah_${activeTab.replace(/\s+/g, '_')}_${selectedZone.replace(/\s+/g, '_')}_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleExportPDF = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
     const tableHeaderHtml = activeTable.headers.map((h: string) => `<th>${h}</th>`).join('');
-    const tableRowsHtml = activeTable.rows.map((row: any[]) => {
+    const tableRowsHtml = filteredRows.map((row: any[]) => {
       return `<tr>${row.map((cell: any, cidx: number) => {
         const isStrong = cidx === 0 || (activeTab === 'Franchise Report' && cidx === 3) || (activeTab === 'Financial Report' && cidx === 5);
         return `<td class="${isStrong ? 'strong-cell' : ''}">${cell}</td>`;
@@ -768,7 +890,7 @@ export default function ReportsPage() {
           </div>
 
           <div class="table-section">
-            <div class="table-title">${activeTable.title}</div>
+            <div class="table-title">${activeTable.title} (${filteredRows.length} records)</div>
             <table>
               <thead>
                 <tr>${tableHeaderHtml}</tr>
@@ -816,7 +938,7 @@ export default function ReportsPage() {
             {/* Page Title */}
             <div className="rep-title-row">
               <div>
-                <h1 className="rep-h1">Reports</h1>
+                <h1 className="rep-h1">Reports & Telemetry Analytics</h1>
                 <p className="rep-sub">{activeSubtitle}</p>
               </div>
               <div className="rep-actions">
@@ -825,27 +947,23 @@ export default function ReportsPage() {
                     <line x1="12" y1="5" x2="12" y2="19" />
                     <line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
-                  Create Custom Report
+                  Custom Builder
                 </button>
-                <button className="rep-btn">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                  Schedule Report
-                </button>
-                <button className="rep-btn rep-btn-primary" onClick={handleExportPDF}>
+                <button className="rep-btn" onClick={handleExportCSV}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                     <polyline points="7 10 12 15 17 10" />
                     <line x1="12" y1="15" x2="12" y2="3" />
                   </svg>
-                  Export Report
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 4 }}>
+                  Export CSV
+                </button>
+                <button className="rep-btn rep-btn-primary" onClick={handleExportPDF}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
                     <polyline points="6 9 12 15 18 9" />
+                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                    <rect x="6" y="14" width="12" height="8" />
                   </svg>
+                  Export PDF
                 </button>
               </div>
             </div>
@@ -865,10 +983,13 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            {/* Filters panel */}
-            <div className="rep-filter-card">
-              <div className="rep-filter-grid" style={{ gridTemplateColumns: '1.2fr 1fr 1.6fr auto auto' }}>
+            {/* Advanced Filters Panel */}
+            <div className="rep-filter-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Row 1: Zone, Subtype, Preset, Custom Dates, Status */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', alignItems: 'center' }}>
+                {/* Zone Picker */}
                 <div style={{ position: 'relative' }}>
+                  <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Zone / Hub</label>
                   <select
                     className="rep-select"
                     value={selectedZone}
@@ -886,50 +1007,116 @@ export default function ReportsPage() {
                     ))}
                   </select>
                   {isZoneLocked && (
-                    <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '10px', background: '#EEF2FF', color: '#6366F1', padding: '2px 6px', borderRadius: 4, fontWeight: 700, pointerEvents: 'none' }}>
+                    <span style={{ position: 'absolute', right: 8, top: '65%', transform: 'translateY(-50%)', fontSize: '10px', background: '#EEF2FF', color: '#6366F1', padding: '2px 6px', borderRadius: 4, fontWeight: 700, pointerEvents: 'none' }}>
                       Assigned
                     </span>
                   )}
                 </div>
 
+                {/* Sub-type selector */}
                 <div>
-                  <select className="rep-select" defaultValue="Performance Summary">
-                    <option>Performance Summary</option>
-                    <option>Operational Audit</option>
-                    <option>Financial Breakdown</option>
+                  <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>View Mode</label>
+                  <select 
+                    className="rep-select" 
+                    value={reportSubtype}
+                    onChange={e => setReportSubtype(e.target.value)}
+                  >
+                    <option value="Performance Summary">Performance Summary</option>
+                    <option value="Operational Audit">Operational Audit</option>
+                    <option value="Financial Breakdown">Financial Breakdown</option>
                   </select>
                 </div>
 
-                {/* Customizable Date Range Pickers */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1.5px solid #E2E8F0', borderRadius: 10, padding: '6px 12px' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2.2" style={{ flexShrink: 0 }}>
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
+                {/* Date Preset */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Date Preset</label>
+                  <select
+                    className="rep-select"
+                    value={datePreset}
+                    onChange={e => handlePresetChange(e.target.value)}
+                  >
+                    <option value="This Month">This Month</option>
+                    <option value="Today">Today</option>
+                    <option value="Yesterday">Yesterday</option>
+                    <option value="This Week">This Week</option>
+                    <option value="Last 30 Days">Last 30 Days</option>
+                    <option value="This Quarter">This Quarter</option>
+                    <option value="Year to Date">Year to Date (YTD)</option>
+                    <option value="All Time">All Time</option>
+                    <option value="Custom">Custom Range</option>
+                  </select>
+                </div>
+
+                {/* Custom Date Pickers */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Custom Range</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#fff', border: '1.5px solid #E2E8F0', borderRadius: 10, padding: '5px 10px' }}>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => { setStartDate(e.target.value); setDatePreset('Custom'); }}
+                      style={{ border: 'none', outline: 'none', fontSize: '11px', fontWeight: 600, color: '#334155', background: 'transparent', width: '100px' }}
+                      title="From Date"
+                    />
+                    <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 700 }}>to</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={e => { setEndDate(e.target.value); setDatePreset('Custom'); }}
+                      style={{ border: 'none', outline: 'none', fontSize: '11px', fontWeight: 600, color: '#334155', background: 'transparent', width: '100px' }}
+                      title="To Date"
+                    />
+                  </div>
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', marginBottom: '4px' }}>Status Filter</label>
+                  <select
+                    className="rep-select"
+                    value={statusFilter}
+                    onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }}
+                  >
+                    <option value="All Statuses">All Statuses</option>
+                    <option value="Active">Active / In Ride</option>
+                    <option value="Completed">Completed / Resolved / Paid</option>
+                    <option value="Pending">Pending / In Progress</option>
+                    <option value="Due">Payment Due / Overdue</option>
+                    <option value="Cancelled">Draft / Cancelled</option>
+                    <option value="Available">Available (In Hub)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 2: Search Input and Filter Action Buttons */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', borderTop: '1px solid #F1F5F9', paddingTop: '10px', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: '220px', position: 'relative' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
                   </svg>
                   <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '12px', fontWeight: 600, color: '#334155', background: 'transparent', width: '115px' }}
-                    title="From Date"
+                    type="text"
+                    value={searchTerm}
+                    onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                    placeholder="Search records by ID, vehicle, customer, package, or status..."
+                    style={{ width: '100%', padding: '8px 12px 8px 34px', border: '1.5px solid #E2E8F0', borderRadius: '10px', fontSize: '12.5px', outline: 'none', background: '#FAFAFA' }}
                   />
-                  <span style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 700 }}>to</span>
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={e => setEndDate(e.target.value)}
-                    style={{ border: 'none', outline: 'none', fontSize: '12px', fontWeight: 600, color: '#334155', background: 'transparent', width: '115px' }}
-                    title="To Date"
-                  />
+                  {searchTerm && (
+                    <button 
+                      onClick={() => setSearchTerm('')}
+                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', fontSize: '14px', fontWeight: 'bold' }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
 
                 <button className="rep-reset-btn" onClick={handleResetFilters} type="button">
                   Reset
                 </button>
                 <button className="rep-apply-btn" onClick={handleApplyFilters} type="button">
-                  {loading ? 'Loading...' : 'Apply Filters'}
+                  {loading ? 'Refreshing...' : 'Apply Filters'}
                 </button>
               </div>
             </div>
@@ -954,26 +1141,19 @@ export default function ReportsPage() {
                     <span className="rep-kpi-lbl">{kpi.label}</span>
                     <span className="rep-kpi-val"><AnimatedCount value={kpi.value} /></span>
                     <span className={`rep-kpi-delta ${kpi.trend === 'up' && kpi.delta !== '0.0%' ? 'delta-up' : kpi.trend === 'down' ? 'delta-down' : ''}`} style={kpi.delta === '0.0%' ? { color: '#64748B' } : undefined}>
-                      {kpi.delta !== '0.0%' && kpi.delta && (
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                          <polyline points={kpi.trend === 'up' ? "18 15 12 9 6 15" : "6 9 12 15 18 9"} />
-                        </svg>
-                      )}
                       {kpi.delta}
-                      <span className="delta-lbl">in period</span>
                     </span>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Charts Row with Real Chart.js Interactive Graphs */}
+            {/* Interactive Charts Row */}
             <div className="rep-charts-grid">
-              {/* Chart 1: Interactive Area Spline Chart */}
+              {/* Chart 1: Interactive Line/Spline Chart */}
               <div className="rep-chart-card">
                 <div className="rep-chart-hdr">
                   <span className="rep-chart-tit">{activeCharts.lineTitle}</span>
-                  <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 'bold' }}>• Live Telemetry</span>
                 </div>
                 <div className="rep-chart-body" style={{ height: '220px', width: '100%' }}>
                   <Line
@@ -984,9 +1164,9 @@ export default function ReportsPage() {
                           label: activeCharts.lineTitle,
                           data: activeCharts.lineHeights,
                           borderColor: '#6366F1',
-                          backgroundColor: 'rgba(99, 102, 241, 0.12)',
-                          fill: true,
+                          backgroundColor: 'rgba(99, 102, 241, 0.08)',
                           tension: 0.4,
+                          fill: true,
                           pointRadius: 4,
                           pointHoverRadius: 6,
                           pointBackgroundColor: '#FFFFFF',
@@ -1108,16 +1288,31 @@ export default function ReportsPage() {
 
             {/* Performance/Details Table */}
             <div className="rep-tcard">
-              <div className="rep-tcard-hdr">
-                <span className="rep-tcard-tit">{activeTable.title}</span>
-                <button className="rep-btn" onClick={handleExportPDF} style={{ padding: '6px 12px', fontSize: '12px' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Export PDF
-                </button>
+              <div className="rep-tcard-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className="rep-tcard-tit">{activeTable.title}</span>
+                  <span style={{ fontSize: '11.5px', background: '#EEF2FF', color: '#6366F1', padding: '2px 8px', borderRadius: '12px', fontWeight: 700 }}>
+                    {filteredRows.length} {filteredRows.length === 1 ? 'record' : 'records'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="rep-btn" onClick={handleExportCSV} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export CSV
+                  </button>
+                  <button className="rep-btn" onClick={handleExportPDF} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" style={{ marginRight: 2 }}>
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    Export PDF
+                  </button>
+                </div>
               </div>
 
               <div className="rep-tbl-wrap">
@@ -1131,42 +1326,71 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {activeTable.rows.map((row: any[], index: number) => (
-                      <tr key={index}>
-                        {row.map((cell: any, cidx: number) => {
-                          const isStrong = cidx === 0 || (activeTab === 'Franchise Report' && cidx === 3) || (activeTab === 'Financial Report' && cidx === 5);
-                          return (
-                            <td key={cidx} className={isStrong ? "rep-tbl-strong" : ""}>
-                              {cell}
-                            </td>
-                          );
-                        })}
-                        <td>
-                          <button className="rep-three-dots" type="button">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                              <circle cx="12" cy="12" r="1" />
-                              <circle cx="19" cy="12" r="1" />
-                              <circle cx="5" cy="12" r="1" />
-                            </svg>
-                          </button>
+                    {displayedRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={activeTable.headers.length + 1} style={{ textAlign: 'center', padding: '36px', color: '#94A3B8', fontSize: '13px' }}>
+                          No report records found matching your filters (Zone: {selectedZone}, Status: {statusFilter}, Search: "{searchTerm || 'None'}").
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      displayedRows.map((row: any[], index: number) => (
+                        <tr key={index}>
+                          {row.map((cell: any, cidx: number) => {
+                            const isStrong = cidx === 0 || (activeTab === 'Franchise Report' && cidx === 3) || (activeTab === 'Financial Report' && cidx === 5);
+                            return (
+                              <td key={cidx} className={isStrong ? "rep-tbl-strong" : ""}>
+                                {cell}
+                              </td>
+                            );
+                          })}
+                          <td>
+                            <button className="rep-three-dots" type="button" onClick={() => alert(`Details for record: ${row[0]}`)}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                <circle cx="12" cy="12" r="1" />
+                                <circle cx="19" cy="12" r="1" />
+                                <circle cx="5" cy="12" r="1" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
 
-              {/* Table Footer */}
+              {/* Table Footer with real working pagination */}
               <div className="rep-tcard-ft">
-                <span className="rep-tcard-ft-lbl">Showing 1 to {activeTable.rows.length} of {activeTable.rows.length} entries</span>
+                <span className="rep-tcard-ft-lbl">
+                  Showing {filteredRows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1} to {Math.min(currentPage * pageSize, filteredRows.length)} of {filteredRows.length} entries
+                </span>
                 <div className="rep-pg">
-                  <button className="rep-pgb" disabled type="button">
+                  <button 
+                    className="rep-pgb" 
+                    disabled={currentPage <= 1} 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    type="button"
+                  >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <polyline points="15 18 9 12 15 6" />
                     </svg>
                   </button>
-                  <button className="rep-pgb cur" type="button">1</button>
-                  <button className="rep-pgb" disabled type="button">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => i + 1).map(p => (
+                    <button 
+                      key={p} 
+                      className={`rep-pgb ${currentPage === p ? 'cur' : ''}`} 
+                      onClick={() => setCurrentPage(p)}
+                      type="button"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button 
+                    className="rep-pgb" 
+                    disabled={currentPage >= totalPages} 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    type="button"
+                  >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                       <polyline points="9 18 15 12 9 6" />
                     </svg>
@@ -1174,9 +1398,14 @@ export default function ReportsPage() {
                 </div>
 
                 <div>
-                  <select className="rep-limit-select" defaultValue="10">
-                    <option value="10">10 per page</option>
-                    <option value="25">25 per page</option>
+                  <select 
+                    className="rep-limit-select" 
+                    value={pageSize}
+                    onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                  >
+                    <option value={10}>10 per page</option>
+                    <option value={25}>25 per page</option>
+                    <option value={50}>50 per page</option>
                   </select>
                 </div>
               </div>
