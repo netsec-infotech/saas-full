@@ -334,13 +334,19 @@ const STEPS = [
 
 /* ── Right Panel ── */
 function RightPanel({ 
-  zoneName, vehicleCode, vehicleModel, batteryName, planName, planPrice, depositAmount, durationDays 
+  zoneName, vehicleCode, vehicleModel, batteryName, planName, planPrice, depositAmount, durationDays, rateType, minMinutes 
 }: { 
-  zoneName: string; vehicleCode: string; vehicleModel: string; batteryName: string; planName: string; planPrice: number; depositAmount: number; durationDays: number; 
+  zoneName: string; vehicleCode: string; vehicleModel: string; batteryName: string; planName: string; planPrice: number; depositAmount: number; durationDays: number; rateType?: string; minMinutes?: number;
 }) {
   const subtotal = planPrice || 0;
   const deposit = Number(depositAmount ?? 0);
   const total = subtotal + deposit;
+
+  const durationLabel = rateType === 'minute'
+    ? `Min ${minMinutes || 10} Mins`
+    : rateType === 'hourly'
+    ? '1 Hour'
+    : `${durationDays} ${durationDays === 1 ? 'Day' : 'Days'}`;
 
   return (
     <div className="nr-rp">
@@ -356,8 +362,8 @@ function RightPanel({
             { l: 'Vehicle Number', v: vehicleCode || 'Not selected' },
             { l: 'Vehicle Model', v: vehicleModel || 'Evegah City' },
             { l: 'Swappable Battery', v: batteryName || 'Evegah 60V 30Ah' },
-            { l: 'Rental Package', v: planName || 'Daily Pass' },
-            { l: 'Package Duration', v: `${durationDays} ${durationDays === 1 ? 'Day' : 'Days'}` },
+            { l: 'Rental Package', v: planName || 'None' },
+            { l: 'Package Duration', v: durationLabel },
             { l: 'Rental Rent Price', v: `₹${subtotal.toFixed(2)}` },
             { l: 'Refundable Security Deposit', v: `₹${deposit.toFixed(2)}` },
           ].map(r => (
@@ -488,11 +494,33 @@ function normalizeModel(m: string): string {
   return m;
 }
 
+function matchesModel(itemModel: string | undefined, currentModel: string): boolean {
+  if (!itemModel) return true;
+  const im = itemModel.trim().toLowerCase();
+  if (!im || im === 'all' || im === 'all models') return true;
+  const cm = currentModel.trim().toLowerCase();
+  const normIm = normalizeModel(im).toLowerCase();
+  const normCm = normalizeModel(cm).toLowerCase();
+  return normIm === normCm || normIm.includes(normCm) || normCm.includes(normIm);
+}
+
 const formatLocalDate = (d: Date): string => {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+};
+
+const parseDateSafe = (dStr: string): Date | null => {
+  if (!dStr) return null;
+  const parts = dStr.split(/[-/]/).map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return null;
+  // If first part is 4 digits (e.g. 2026-11-17), it's YYYY-MM-DD
+  if (parts[0] > 1000) {
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+  // Otherwise it's DD-MM-YYYY (e.g. 17-11-2026)
+  return new Date(parts[2], parts[1] - 1, parts[0]);
 };
 
 const parseDurationDays = (pkg: any): number => {
@@ -515,11 +543,9 @@ const parseDurationDays = (pkg: any): number => {
 
 const calculateDaysDifference = (start: string, end: string): number => {
   if (!start || !end) return 1;
-  const [sy, sm, sd] = start.split('-').map(Number);
-  const [ey, em, ed] = end.split('-').map(Number);
-  if (!sy || !sm || !sd || !ey || !em || !ed) return 1;
-  const sDate = new Date(sy, sm - 1, sd);
-  const eDate = new Date(ey, em - 1, ed);
+  const sDate = parseDateSafe(start);
+  const eDate = parseDateSafe(end);
+  if (!sDate || !eDate) return 1;
   const diffTime = eDate.getTime() - sDate.getTime();
   const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
   return diffDays > 0 ? diffDays : 1;
@@ -765,30 +791,58 @@ export default function RentalDetailsPage() {
       ? (JSON.parse(selectedZone.pricing || '{}'))
       : (selectedZone.pricing || {});
 
-    // Check hourlyPricing if zone is Hourly Based
-    if (zPricing.pricingModel === 'Hourly Based' && Array.isArray(zPricing.hourlyPricing)) {
-      const activeHourly = zPricing.hourlyPricing.filter((h: any) => h.status !== false);
-      const matchingModelHourly = activeHourly.filter((h: any) => normalizeModel(h.model || '').toLowerCase() === selectedModelName.toLowerCase());
-      const targetHourly = matchingModelHourly.length > 0 ? matchingModelHourly : activeHourly;
+    // 1. Minute Pricing extraction
+    if (Array.isArray(zPricing.minutePricing) && zPricing.minutePricing.length > 0) {
+      const activeMinute = zPricing.minutePricing.filter((m: any) => m.status !== false && matchesModel(m.model, selectedModelName));
+      activeMinute.forEach((m: any, idx: number) => {
+        const rate = parseFloat(m.ratePerMinute || 0);
+        const unlock = parseFloat(m.unlockFee || 0);
+        const minMins = parseInt(m.minMinutes || 10, 10);
+        const minBaseRent = unlock + (rate * minMins);
+        pkgs.push({
+          id: m.id ? `minute_${m.id}` : `minute_${idx + 1}`,
+          name: `${m.model || selectedModelName} (Minute Pass - ₹${rate.toFixed(2)}/min)`,
+          price: minBaseRent,
+          ratePerMinute: rate,
+          unlockFee: unlock,
+          minMinutes: minMins,
+          deposit: parseFloat(m.deposit !== undefined && m.deposit !== null ? m.deposit : 0),
+          duration: 1,
+          duration_days: 1,
+          duration_hours: 1,
+          duration_minutes: minMins,
+          rateType: 'minute',
+          isMinute: true,
+          model: m.model || selectedModelName
+        });
+      });
+    }
 
-      if (targetHourly.length > 0) {
-        pkgs = targetHourly.map((h: any, idx: number) => ({
-          id: `hourly_${idx + 1}`,
+    // 2. Hourly Pricing extraction
+    if (Array.isArray(zPricing.hourlyPricing) && zPricing.hourlyPricing.length > 0) {
+      const activeHourly = zPricing.hourlyPricing.filter((h: any) => h.status !== false && matchesModel(h.model, selectedModelName));
+      activeHourly.forEach((h: any, idx: number) => {
+        pkgs.push({
+          id: h.id ? `hourly_${h.id}` : `hourly_${idx + 1}`,
           name: `${h.model || selectedModelName} (${h.roundingRule || 'Per Hour'})`,
           duration: 1,
+          duration_days: 1,
           duration_hours: 1,
           price: parseFloat(h.basePrice || 0),
           deposit: parseFloat(h.deposit !== undefined && h.deposit !== null ? h.deposit : 0),
-          roundingRule: h.roundingRule
-        }));
-      }
+          roundingRule: h.roundingRule || 'Per Hour',
+          rateType: 'hourly',
+          isHourly: true,
+          model: h.model || selectedModelName
+        });
+      });
     }
 
+    // 3. Multi-day / Packages extraction
     const allPkgs: any[] = [];
     if (Array.isArray(zPricing.packages)) {
       allPkgs.push(...zPricing.packages);
     }
-    // Also check if packages are stored inside modelPackages
     if (zPricing.modelPackages) {
       Object.keys(zPricing.modelPackages).forEach(k => {
         if (Array.isArray(zPricing.modelPackages[k])) {
@@ -800,19 +854,13 @@ export default function RentalDetailsPage() {
     }
 
     if (allPkgs.length > 0) {
-      const normSel = normalizeModel(selectedModelName).toLowerCase();
-      // Filter packages that match this model or are for All Models / no model specified
       const applicable = allPkgs.filter((p: any) => {
         if (!p || Number(p.price) <= 0) return false;
-        const pModel = (p.model || '').toLowerCase().trim();
-        if (!pModel || pModel === 'all models' || pModel === 'all') return true;
-        const normP = normalizeModel(p.model).toLowerCase();
-        return normP === normSel || normP.includes(normSel) || normSel.includes(normP) || (pModel.includes('city') && normSel.includes('city'));
+        return matchesModel(p.model, selectedModelName);
       });
 
-      // Deduplicate packages by duration (favoring model-specific package over generic 'All Models')
       const byDuration = new Map<number, any>();
-      applicable.forEach(p => {
+      applicable.forEach((p: any, idx: number) => {
         const d = parseDurationDays(p);
         const existing = byDuration.get(d);
         const pModel = (p.model || '').toLowerCase().trim();
@@ -820,45 +868,61 @@ export default function RentalDetailsPage() {
         if (!existing || isModelSpecific) {
           byDuration.set(d, {
             ...p,
-            id: p.id || `pkg_${d}d`,
+            id: p.id || `pkg_${d}d_${idx}`,
             duration: d,
             duration_days: d,
+            duration_hours: d * 24,
             name: p.name || (d === 1 ? 'Daily Pass (1 Day)' : d === 7 ? 'Weekly Pass (7 Days)' : d === 30 ? 'Monthly Pass (30 Days)' : `${d} Days Pass`),
             price: parseFloat(p.price || 0),
-            deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0))
+            deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0)),
+            rateType: 'package',
+            model: p.model || selectedModelName
           });
         }
       });
 
-      pkgs = Array.from(byDuration.values()).sort((a, b) => a.duration - b.duration);
+      const sortedPkgs = Array.from(byDuration.values()).sort((a, b) => a.duration - b.duration);
+      pkgs.push(...sortedPkgs);
     }
 
-    // Fallback standard packages if none found
-    if (pkgs.length === 0) {
-      pkgs = [
-        { id: 'pkg_1d', name: 'Daily Pass (1 Day)', duration: 1, duration_days: 1, duration_hours: 24, price: 350, deposit: 500 },
-        { id: 'pkg_3d', name: '3 Days City Pass', duration: 3, duration_days: 3, duration_hours: 72, price: 900, deposit: 1000 },
-        { id: 'pkg_7d', name: 'Weekly Pass (7 Days)', duration: 7, duration_days: 7, duration_hours: 168, price: 1800, deposit: 1500 },
-        { id: 'pkg_30d', name: 'Monthly Pro Pass (30 Days)', duration: 30, duration_days: 30, duration_hours: 720, price: 6500, deposit: 2000 }
-      ];
-    }
-
+    // Strictly connected with backend: no dummy fallback
     setPackagesList(pkgs);
-    setSelectedPackage(pkgs[0]);
+    setSelectedPackage((prev: any) => {
+      if (prev) {
+        const match = pkgs.find((p: any) => String(p.id) === String(prev.id) || p.name === prev.name);
+        if (match) return match;
+      }
+      return pkgs.length > 0 ? pkgs[0] : null;
+    });
   }, [selectedZone, selectedModelName]);
 
-  // Auto-calculate return date & return time based on package duration (Local time aware, exact days)
+  // Auto-calculate return date & return time based on package duration (Local time aware, exact days/hours)
   useEffect(() => {
     if (!selectedPackage) return;
-    const duration = parseDurationDays(selectedPackage);
-    const pkgName = (selectedPackage.name || '').toLowerCase();
-    const isHourly = Boolean(selectedPackage.isHourly || selectedPackage.roundingRule || pkgName.includes('hour') || (selectedPackage.type && selectedPackage.type.toLowerCase().includes('hour')));
-
     const baseDate = startDate || formatLocalDate(new Date());
-    const [y, m, d] = baseDate.split('-').map(Number);
-    const dropDateObj = new Date(y, m - 1, d);
+    const parsedStart = parseDateSafe(baseDate) || new Date();
 
-    if (isHourly) {
+    if (selectedPackage.rateType === 'minute' || selectedPackage.isMinute) {
+      setTotalDays(1);
+      setReturnDate(formatLocalDate(parsedStart));
+      const match = (startTime || '12:00 PM').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      if (match) {
+        let h = parseInt(match[1], 10);
+        let min = parseInt(match[2], 10);
+        const ampm = match[3] ? match[3].toUpperCase() : 'AM';
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        const d = new Date(parsedStart);
+        d.setHours(h, min + (selectedPackage.minMinutes || 10));
+        let resH = d.getHours();
+        const resM = d.getMinutes();
+        const resAmpm = resH >= 12 ? 'PM' : 'AM';
+        resH = resH % 12 || 12;
+        setReturnTime(`${resH}:${resM < 10 ? '0' + resM : resM} ${resAmpm}`);
+      } else {
+        setReturnTime('08:00 PM');
+      }
+    } else if (selectedPackage.rateType === 'hourly' || selectedPackage.isHourly) {
       setTotalDays(1);
       const match = (startTime || '12:00 PM').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
       if (match) {
@@ -867,24 +931,22 @@ export default function RentalDetailsPage() {
         const ampm = match[3] ? match[3].toUpperCase() : 'AM';
         if (ampm === 'PM' && h !== 12) h += 12;
         if (ampm === 'AM' && h === 12) h = 0;
-
-        const dateWithTime = new Date(y, m - 1, d, h, min);
-        const hrsToAdd = Number(selectedPackage.duration_hours) || 1;
-        dateWithTime.setHours(dateWithTime.getHours() + hrsToAdd);
-
-        let resH = dateWithTime.getHours();
-        const resM = dateWithTime.getMinutes();
+        const d = new Date(parsedStart);
+        d.setHours(d.getHours() + (Number(selectedPackage.duration_hours) || 1));
+        let resH = d.getHours();
+        const resM = d.getMinutes();
         const resAmpm = resH >= 12 ? 'PM' : 'AM';
-        resH = resH % 12;
-        resH = resH ? resH : 12;
+        resH = resH % 12 || 12;
         setReturnTime(`${resH}:${resM < 10 ? '0' + resM : resM} ${resAmpm}`);
-        setReturnDate(formatLocalDate(dateWithTime));
+        setReturnDate(formatLocalDate(d));
       } else {
         setReturnDate(baseDate);
         setReturnTime('08:00 PM');
       }
     } else {
+      const duration = parseDurationDays(selectedPackage);
       setTotalDays(duration);
+      const dropDateObj = new Date(parsedStart);
       dropDateObj.setDate(dropDateObj.getDate() + duration);
       setReturnDate(formatLocalDate(dropDateObj));
       setReturnTime(startTime || selectedZone?.close_time || '08:00 PM');
@@ -927,6 +989,10 @@ export default function RentalDetailsPage() {
       alert(`No available vehicle in ${selectedZone?.name || 'this zone'} for ${selectedModelName}. Please choose another model or change zone.`);
       return;
     }
+    if (!selectedPackage) {
+      alert(`No active rental plan configured for ${selectedModelName} in ${selectedZone?.name || 'this zone'}. Please configure pricing in Zone Management.`);
+      return;
+    }
     if (!startDate || !returnDate) {
       alert('Please specify valid start and return dates.');
       return;
@@ -937,7 +1003,8 @@ export default function RentalDetailsPage() {
       vehicle_name: `${selectedModelName} (${selectedVehicleCode})`,
       vehicle_model: selectedModelName,
       battery_id: selectedBatteryId || 'BAT-GT-60V-01',
-      plan_type: selectedPackage?.name || 'Daily Pass',
+      plan_type: selectedPackage?.name || 'Standard Plan',
+      rate_type: selectedPackage?.rateType || 'package',
       plan_rate: Number(selectedPackage?.price || 0),
       deposit_amount: Number(selectedPackage?.deposit ?? 0),
       start_date: startDate,
@@ -1200,29 +1267,59 @@ export default function RentalDetailsPage() {
                           {selectedModelName}
                         </span>
                       </div>
-                      <select 
-                        className="rd-plan-sel"
-                        value={selectedPackage?.id || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const found = packagesList.find(p => String(p.id) === String(val));
-                          if (found) {
-                            setSelectedPackage(found);
-                            const dur = parseDurationDays(found);
-                            setTotalDays(dur);
-                          }
-                        }}
-                      >
-                        {packagesList.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({p.duration} {p.duration === 1 ? 'Day' : 'Days'}) - Rent: ₹{p.price} | Dep: ₹{Number(p.deposit ?? 0)}
-                          </option>
-                        ))}
-                      </select>
+                      {packagesList.length === 0 ? (
+                        <div style={{
+                          padding: '12px 14px',
+                          background: '#FFFBEB',
+                          border: '1px solid #FCD34D',
+                          borderRadius: '10px',
+                          color: '#B45309',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          marginBottom: '12px',
+                          lineHeight: 1.4
+                        }}>
+                          ⚠️ No active rental plan configured for <strong>{selectedModelName}</strong> in <strong>{selectedZone?.name || 'this zone'}</strong>. Please configure zone pricing in Zone Management.
+                        </div>
+                      ) : (
+                        <select 
+                          className="rd-plan-sel"
+                          value={selectedPackage?.id || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const found = packagesList.find(p => String(p.id) === String(val));
+                            if (found) {
+                              setSelectedPackage(found);
+                              if (found.rateType === 'package') {
+                                const dur = parseDurationDays(found);
+                                setTotalDays(dur);
+                              } else {
+                                setTotalDays(1);
+                              }
+                            }
+                          }}
+                        >
+                          {packagesList.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.rateType === 'package' ? ` (${p.duration} ${p.duration === 1 ? 'Day' : 'Days'})` : ''}
+                              {' - Rent: ₹' + Number(p.price || 0).toFixed(2)} | Dep: ₹{Number(p.deposit ?? 0).toFixed(2)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <div className="rd-price-box">
                         <div>
                           <span className="rd-price-amount">₹{(selectedPackage?.price || 0).toFixed(2)}</span>
-                          <span className="rd-price-unit"> / {totalDays} {totalDays === 1 ? 'Day' : 'Days'}</span>
+                          <span className="rd-price-unit">
+                            {selectedPackage?.rateType === 'minute'
+                              ? ` / Min (Min ${selectedPackage.minMinutes || 10}m)`
+                              : selectedPackage?.rateType === 'hourly'
+                              ? ' / 1 Hour'
+                              : ` / ${selectedPackage ? parseDurationDays(selectedPackage) : totalDays} ${
+                                  (selectedPackage ? parseDurationDays(selectedPackage) : totalDays) === 1 ? 'Day' : 'Days'
+                                }`}
+                          </span>
                         </div>
                         <div className="rd-price-from" style={{ color: '#059669', fontWeight: 700 }}>
                           + Refundable Deposit: ₹{Number(selectedPackage?.deposit ?? 0).toFixed(2)}
@@ -1241,7 +1338,9 @@ export default function RentalDetailsPage() {
                           {f.label}
                         </div>
                       ))}
-                      <button className="rd-view-plans">View zone pricing <IArr s={11} /></button>
+                      <Link href="/zones/pricing" className="rd-view-plans" style={{ textDecoration: 'none' }}>
+                        View zone pricing <IArr s={11} />
+                      </Link>
                     </div>
 
                   </div>
@@ -1323,8 +1422,20 @@ export default function RentalDetailsPage() {
                       {/* Duration */}
                       <div className="rd-dur-box">
                         <div className="rd-dur-lbl">Total Duration</div>
-                        <div className="rd-dur-val">{totalDays} {totalDays === 1 ? 'Day' : 'Days'}</div>
-                        <div className="rd-dur-sub">({totalDays * 24} Hours)</div>
+                        <div className="rd-dur-val">
+                          {selectedPackage?.rateType === 'minute'
+                            ? `${selectedPackage.minMinutes || 10} Mins (Min)`
+                            : selectedPackage?.rateType === 'hourly'
+                            ? '1 Hour'
+                            : `${totalDays} ${totalDays === 1 ? 'Day' : 'Days'}`}
+                        </div>
+                        <div className="rd-dur-sub">
+                          {selectedPackage?.rateType === 'minute'
+                            ? `(Pay-per-minute @ ₹${selectedPackage.ratePerMinute}/min)`
+                            : selectedPackage?.rateType === 'hourly'
+                            ? '(60 Minutes)'
+                            : `(${totalDays * 24} Hours)`}
+                        </div>
                       </div>
                     </div>
                     <div className="rd-timing-note">
@@ -1377,10 +1488,12 @@ export default function RentalDetailsPage() {
                 vehicleCode={selectedVehicleCode}
                 vehicleModel={selectedModelName}
                 batteryName={selectedBatteryId || 'No battery allocated'}
-                planName={selectedPackage?.name || 'Daily Pass'}
+                planName={selectedPackage?.name || 'No Plan Selected'}
                 planPrice={Number(selectedPackage?.price || 0)}
                 depositAmount={Number(selectedPackage?.deposit ?? 0)}
                 durationDays={totalDays}
+                rateType={selectedPackage?.rateType}
+                minMinutes={selectedPackage?.minMinutes}
               />
             </div>
           </div>

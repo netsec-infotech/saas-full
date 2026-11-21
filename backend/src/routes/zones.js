@@ -277,28 +277,63 @@ router.get('/pricing', async (req, res) => {
 
     let packages = [];
 
-    // 1. Map hourly pricing options
-    if (Array.isArray(pricingObj.hourlyPricing) && pricingObj.hourlyPricing.length > 0) {
-      pricingObj.hourlyPricing.forEach((h, idx) => {
-        packages.push({
-          id: h.id ? `hourly_${h.id}` : `hourly_${idx + 1}`,
-          name: `${h.model || 'Standard EV'} Hourly (${h.roundingRule || 'Per Hour'})`,
-          pricing_type: 'Hourly',
-          duration: 1,
-          duration_days: 1,
-          duration_hours: 1,
-          price: parseFloat(h.basePrice || 0),
-          base_fare: parseFloat(h.basePrice || 0),
-          extra_price: parseFloat(h.extraPrice || 0),
-          deposit: parseFloat(h.deposit !== undefined && h.deposit !== null ? h.deposit : 0),
-          deposit_amount: parseFloat(h.deposit !== undefined && h.deposit !== null ? h.deposit : 0),
-          model: h.model,
-          roundingRule: h.roundingRule
-        });
+    // 1. Map minute pricing options
+    if (Array.isArray(pricingObj.minutePricing) && pricingObj.minutePricing.length > 0) {
+      pricingObj.minutePricing.forEach((m, idx) => {
+        if (m.status !== false) {
+          const rate = parseFloat(m.ratePerMinute || 0);
+          const unlock = parseFloat(m.unlockFee || 0);
+          const minMins = parseInt(m.minMinutes || 10, 10);
+          const minBaseRent = unlock + (rate * minMins);
+          packages.push({
+            id: m.id ? `minute_${m.id}` : `minute_${idx + 1}`,
+            name: `${m.model || 'Standard EV'} Minute Pass (₹${rate.toFixed(2)}/min)`,
+            pricing_type: 'Minute',
+            rate_type: 'minute',
+            duration: 1,
+            duration_days: 1,
+            duration_hours: 1,
+            duration_minutes: minMins,
+            rate_per_minute: rate,
+            unlock_fee: unlock,
+            min_minutes: minMins,
+            price: minBaseRent,
+            base_fare: minBaseRent,
+            deposit: parseFloat(m.deposit !== undefined && m.deposit !== null ? m.deposit : 0),
+            deposit_amount: parseFloat(m.deposit !== undefined && m.deposit !== null ? m.deposit : 0),
+            model: m.model,
+            is_minute: true
+          });
+        }
       });
     }
 
-    // 2. Map multi-day / package pricing options
+    // 2. Map hourly pricing options
+    if (Array.isArray(pricingObj.hourlyPricing) && pricingObj.hourlyPricing.length > 0) {
+      pricingObj.hourlyPricing.forEach((h, idx) => {
+        if (h.status !== false) {
+          packages.push({
+            id: h.id ? `hourly_${h.id}` : `hourly_${idx + 1}`,
+            name: `${h.model || 'Standard EV'} Hourly (${h.roundingRule || 'Per Hour'})`,
+            pricing_type: 'Hourly',
+            rate_type: 'hourly',
+            duration: 1,
+            duration_days: 1,
+            duration_hours: 1,
+            price: parseFloat(h.basePrice || 0),
+            base_fare: parseFloat(h.basePrice || 0),
+            extra_price: parseFloat(h.extraPrice || 0),
+            deposit: parseFloat(h.deposit !== undefined && h.deposit !== null ? h.deposit : 0),
+            deposit_amount: parseFloat(h.deposit !== undefined && h.deposit !== null ? h.deposit : 0),
+            model: h.model,
+            roundingRule: h.roundingRule,
+            is_hourly: true
+          });
+        }
+      });
+    }
+
+    // 3. Map multi-day / package pricing options
     if (Array.isArray(pricingObj.packages) && pricingObj.packages.length > 0) {
       pricingObj.packages.forEach((p, idx) => {
         const days = parseInt(p.duration || p.duration_days || 1, 10);
@@ -306,6 +341,7 @@ router.get('/pricing', async (req, res) => {
           id: p.id || `pkg_${idx + 1}`,
           name: p.name || p.title || `${days} Day Pass`,
           pricing_type: 'Package',
+          rate_type: 'package',
           duration: days,
           duration_days: days,
           duration_hours: days * 24,
@@ -318,18 +354,6 @@ router.get('/pricing', async (req, res) => {
       });
     }
 
-    // 3. Fallback to standard packages if zone pricing packages are empty
-    if (packages.length === 0) {
-      const isDaman = (z.name || '').toLowerCase().includes('daman');
-      const standardList = [
-        { id: 'pkg_1d', name: isDaman ? 'Coastal Day Pass (1 Day)' : 'Daily Pass (1 Day)', pricing_type: 'Package', duration: 1, duration_days: 1, duration_hours: 24, price: isDaman ? 450 : 350, base_fare: isDaman ? 450 : 350, deposit: isDaman ? 0 : 500, deposit_amount: isDaman ? 0 : 500, model: 'All Models' },
-        { id: 'pkg_3d', name: isDaman ? '3 Days Beach Pass' : '3 Days City Pass', pricing_type: 'Package', duration: 3, duration_days: 3, duration_hours: 72, price: isDaman ? 1199 : 900, base_fare: isDaman ? 1199 : 900, deposit: isDaman ? 0 : 1000, deposit_amount: isDaman ? 0 : 1000, model: 'All Models' },
-        { id: 'pkg_7d', name: isDaman ? '7 Days Coastal Pass' : '7 Days Weekly Pass', pricing_type: 'Package', duration: 7, duration_days: 7, duration_hours: 168, price: isDaman ? 2499 : 1800, base_fare: isDaman ? 2499 : 1800, deposit: isDaman ? 0 : 1500, deposit_amount: isDaman ? 0 : 1500, model: 'All Models' },
-        { id: 'pkg_30d', name: 'Monthly Pro Pass (30 Days)', pricing_type: 'Package', duration: 30, duration_days: 30, duration_hours: 720, price: 6500, base_fare: 6500, deposit: isDaman ? 0 : 2000, deposit_amount: isDaman ? 0 : 2000, model: 'All Models' }
-      ];
-      packages = standardList;
-    }
-
     const defaultDeposit = packages.length > 0 ? packages[0].deposit_amount : parseFloat(pricingObj.securityDeposit || 0);
 
     res.json({
@@ -339,6 +363,7 @@ router.get('/pricing', async (req, res) => {
         zone_name: z.name,
         pricing_model: pricingObj.pricingModel || (pricingObj.pricingModels ? pricingObj.pricingModels.join(' & ') : 'Package & Hourly Based'),
         pricing_models: pricingObj.pricingModels || (pricingObj.pricingModel ? [pricingObj.pricingModel] : ['Package Based', 'Hourly Based']),
+        minutePricing: pricingObj.minutePricing || [],
         hourlyPricing: pricingObj.hourlyPricing || [],
         packages: packages,
         security_deposit: defaultDeposit

@@ -311,6 +311,16 @@ function normalizeModel(m: string): string {
   return m;
 }
 
+function matchesModel(itemModel: string | undefined, currentModel: string): boolean {
+  if (!itemModel) return true;
+  const im = itemModel.trim().toLowerCase();
+  if (!im || im === 'all' || im === 'all models') return true;
+  const cm = currentModel.trim().toLowerCase();
+  const normIm = normalizeModel(im).toLowerCase();
+  const normCm = normalizeModel(cm).toLowerCase();
+  return normIm === normCm || normIm.includes(normCm) || normCm.includes(normIm);
+}
+
 const formatLocalDate = (d: Date): string => {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -373,9 +383,10 @@ export default function RetainRiderRentalPage() {
 
   const computePlannedDrop = (startDateStr: string, startTimeStr: string, pkg: any) => {
     const pkgName = (pkg?.name || '').toLowerCase();
-    const isHourly = Boolean(pkg?.isHourly || pkg?.roundingRule || pkgName.includes('hour') || (pkg?.type && pkg?.type.toLowerCase().includes('hour')));
+    const isMinute = Boolean(pkg?.is_minute || pkg?.rate_type === 'minute' || pkgName.includes('minute'));
+    const isHourly = Boolean(pkg?.is_hourly || pkg?.isHourly || pkg?.roundingRule || pkg?.rate_type === 'hourly' || pkgName.includes('hour') || (pkg?.type && pkg?.type.toLowerCase().includes('hour')));
     const hoursToAdd = isHourly ? (Number(pkg?.duration_hours) || 1) : 0;
-    const daysToAdd = isHourly ? 0 : (Number(pkg?.duration_days || pkg?.duration) || 1);
+    const daysToAdd = isHourly || isMinute ? 0 : (Number(pkg?.duration_days || pkg?.duration) || 1);
 
     const baseDate = startDateStr || formatLocalDate(new Date());
     const [y, m, d] = baseDate.split('-').map(Number);
@@ -384,7 +395,24 @@ export default function RetainRiderRentalPage() {
     let calculatedTime = startTimeStr || '12:00 PM';
     let calculatedDate = baseDate;
 
-    if (isHourly) {
+    if (isMinute) {
+      const match = (startTimeStr || '12:00 PM').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+      if (match) {
+        let h = parseInt(match[1], 10);
+        const min = parseInt(match[2], 10);
+        const ampm = match[3] ? match[3].toUpperCase() : 'AM';
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+
+        const dObj = new Date(y, m - 1, d, h, min + (Number(pkg?.min_minutes) || 10));
+        let resH = dObj.getHours();
+        const resM = dObj.getMinutes();
+        const resAmpm = resH >= 12 ? 'PM' : 'AM';
+        resH = resH % 12 || 12;
+        calculatedTime = `${resH}:${resM < 10 ? '0' + resM : resM} ${resAmpm}`;
+        calculatedDate = formatLocalDate(dObj);
+      }
+    } else if (isHourly) {
       const match = (startTimeStr || '12:00 PM').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
       if (match) {
         let h = parseInt(match[1], 10);
@@ -579,16 +607,29 @@ export default function RetainRiderRentalPage() {
           pkgs = res;
         }
 
-        if (pkgs.length > 0) {
-          setPackagesList(pkgs);
-          setSelectedPackage(pkgs[0]);
+        // Filter packages matching current model or All Models
+        const applicable = pkgs.filter((p: any) => matchesModel(p.model, selectedModelName));
+        const finalPkgs = applicable.length > 0 ? applicable : pkgs;
+
+        if (finalPkgs.length > 0) {
+          setPackagesList(finalPkgs);
+          setSelectedPackage((prev: any) => {
+            if (prev) {
+              const matched = finalPkgs.find((p: any) => String(p.id) === String(prev.id) || p.name === prev.name);
+              if (matched) return matched;
+            }
+            return finalPkgs[0];
+          });
         } else {
           setPackagesList([]);
           setSelectedPackage(null);
         }
       })
-      .catch(() => {});
-  }, [activeZoneName]);
+      .catch(() => {
+        setPackagesList([]);
+        setSelectedPackage(null);
+      });
+  }, [activeZoneName, selectedModelName]);
 
   // Update return date and planned drop time when package or pickup changes
   useEffect(() => {
@@ -892,25 +933,55 @@ export default function RetainRiderRentalPage() {
                         <span className="rd-avail">Zero GST</span>
                       </div>
 
-                      <select
-                        className="rd-plan-sel"
-                        value={selectedPackage?.id || ''}
-                        onChange={e => {
-                          const found = packagesList.find(p => String(p.id) === String(e.target.value));
-                          if (found) setSelectedPackage(found);
-                        }}
-                      >
-                        {packagesList.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({p.duration_days} {p.duration_days === 1 ? 'Day' : 'Days'}) - ₹{p.base_fare}
-                          </option>
-                        ))}
-                      </select>
+                      {packagesList.length === 0 ? (
+                        <div style={{
+                          padding: '12px 14px',
+                          background: '#FFFBEB',
+                          border: '1px solid #FCD34D',
+                          borderRadius: '10px',
+                          color: '#B45309',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          marginBottom: '12px',
+                          lineHeight: 1.4
+                        }}>
+                          ⚠️ No active rental plan configured for <strong>{selectedModelName}</strong> in <strong>{activeZoneName}</strong>. Please configure zone pricing in Zone Management.
+                        </div>
+                      ) : (
+                        <select
+                          className="rd-plan-sel"
+                          value={selectedPackage?.id || ''}
+                          onChange={e => {
+                            const found = packagesList.find(p => String(p.id) === String(e.target.value));
+                            if (found) setSelectedPackage(found);
+                          }}
+                        >
+                          {packagesList.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                              {p.rate_type === 'package' || (!p.rate_type && !p.is_minute && !p.is_hourly) ? ` (${p.duration_days || p.duration} ${(p.duration_days || p.duration) === 1 ? 'Day' : 'Days'})` : ''}
+                              {' - ₹' + Number(p.base_fare || p.price || 0).toFixed(2)}
+                            </option>
+                          ))}
+                        </select>
+                      )}
 
                       <div className="rd-price-box">
                         <div className="rd-price-amount">₹{rentPrice.toFixed(2)}</div>
-                        <div className="rd-price-unit">per package duration</div>
-                        <div className="rd-price-from">Duration: {totalDays} {totalDays === 1 ? 'Day' : 'Days'}</div>
+                        <div className="rd-price-unit">
+                          {selectedPackage?.rate_type === 'minute' || selectedPackage?.is_minute
+                            ? `per minute (Min ${selectedPackage.min_minutes || 10}m)`
+                            : selectedPackage?.rate_type === 'hourly' || selectedPackage?.is_hourly
+                            ? 'per 1 hour'
+                            : `per ${totalDays} ${totalDays === 1 ? 'Day' : 'Days'}`}
+                        </div>
+                        <div className="rd-price-from">
+                          Duration: {selectedPackage?.rate_type === 'minute' || selectedPackage?.is_minute
+                            ? `${selectedPackage.min_minutes || 10} Mins (Min)`
+                            : selectedPackage?.rate_type === 'hourly' || selectedPackage?.is_hourly
+                            ? '1 Hour'
+                            : `${totalDays} ${totalDays === 1 ? 'Day' : 'Days'}`}
+                        </div>
                       </div>
 
                       <div className="rd-feature">
