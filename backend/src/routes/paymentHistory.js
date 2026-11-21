@@ -41,10 +41,13 @@ router.get('/', async (req, res) => {
     if (!isGlobalAdmin && callerZone && callerZone.toLowerCase() !== 'all' && callerZone.toLowerCase() !== 'all zones') {
       const callerAssigned = callerZone.split(',').map(z => z.trim()).filter(Boolean);
       if (effectiveZoneFilter && effectiveZoneFilter.toLowerCase() !== 'all' && effectiveZoneFilter.toLowerCase() !== 'all zones') {
-        const isAllowed = callerAssigned.some(az => 
-          effectiveZoneFilter.toLowerCase().includes(az.toLowerCase()) || 
-          az.toLowerCase().includes(effectiveZoneFilter.toLowerCase())
-        );
+        const isAllowed = callerAssigned.some(az => {
+          const cleanAz = az.toLowerCase().replace(/zone/i, '').trim();
+          const cleanFz = effectiveZoneFilter.toLowerCase().replace(/zone/i, '').trim();
+          return effectiveZoneFilter.toLowerCase().includes(az.toLowerCase()) || 
+                 az.toLowerCase().includes(effectiveZoneFilter.toLowerCase()) ||
+                 (cleanAz && cleanFz && (cleanFz.includes(cleanAz) || cleanAz.includes(cleanFz)));
+        });
         if (!isAllowed) {
           effectiveZoneFilter = callerZone;
         }
@@ -83,7 +86,15 @@ router.get('/', async (req, res) => {
           END AS status,
           'ICICI UPI' AS payment_method,
           COALESCE(ip.purpose, 'Ride / Booking') AS purpose,
-          COALESCE(r.pickup_zone, r.drop_zone, (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) LIMIT 1), 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(r.pickup_zone, ''),
+            NULLIF(r.drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT zone FROM vehicles WHERE code = r.vehicle_number OR registration_number = r.vehicle_number LIMIT 1),
+            (SELECT v.zone FROM vehicles v JOIN renters ren ON (v.code = ren.vehicle_id OR v.registration_number = ren.vehicle_id) WHERE ren.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND v.zone IS NOT NULL AND v.zone != '' ORDER BY ren.created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           ip.created_at
         FROM icici_payments ip
         LEFT JOIN reservations r ON (r.transaction_id = ip.tx_id OR r.reservation_id = ip.reservation_id)
@@ -157,7 +168,11 @@ router.get('/', async (req, res) => {
           END AS status,
           'PhonePe' AS payment_method,
           COALESCE(ph.purpose, 'Ride Payment') AS purpose,
-          COALESCE((SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) LIMIT 1), 'Gotri Zone') AS zone,
+          COALESCE(
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           ph.created_at
         FROM phonepe_payments ph
         WHERE ph.mobile NOT LIKE '%1800%'
@@ -216,7 +231,12 @@ router.get('/', async (req, res) => {
           'Successful' AS status,
           COALESCE(refund_mode, 'PayU') AS payment_method,
           'Security Deposit Refund' AS purpose,
-          COALESCE(pickup_zone, drop_zone, 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(pickup_zone, ''),
+            NULLIF(drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           COALESCE(refund_date, returned_at, created_at) AS created_at
         FROM reservations
         WHERE deposit_status = 'Refunded' AND COALESCE(refund_amount, deposit, 0) > 0
@@ -243,7 +263,12 @@ router.get('/', async (req, res) => {
             ELSE COALESCE(payment_mode, 'Cash')
           END AS payment_method,
           'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')' AS purpose,
-          COALESCE(pickup_zone, drop_zone, 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(pickup_zone, ''),
+            NULLIF(drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           created_at
         FROM reservations
         WHERE payment_status = 'Paid' AND COALESCE(fare, 0) > 0
@@ -343,7 +368,11 @@ router.get('/', async (req, res) => {
         const allowedZones = effectiveZoneFilter.split(',').map(z => z.trim().toLowerCase()).filter(Boolean);
         if (allowedZones.length > 0) {
           const recZone = (rec.zone || 'Gotri Zone').toLowerCase().trim();
-          const matched = allowedZones.some(az => recZone.includes(az) || az.includes(recZone));
+          const cleanRz = recZone.replace(/zone/i, '').trim();
+          const matched = allowedZones.some(az => {
+            const cleanAz = az.replace(/zone/i, '').trim();
+            return recZone.includes(az) || az.includes(recZone) || (cleanAz && cleanRz && (cleanRz.includes(cleanAz) || cleanAz.includes(cleanRz)));
+          });
           if (!matched) return false;
         }
       }
@@ -638,10 +667,13 @@ router.get('/export', async (req, res) => {
     if (!isGlobalAdmin && callerZone && callerZone.toLowerCase() !== 'all' && callerZone.toLowerCase() !== 'all zones') {
       const callerAssigned = callerZone.split(',').map(z => z.trim()).filter(Boolean);
       if (effectiveZoneFilter && effectiveZoneFilter.toLowerCase() !== 'all' && effectiveZoneFilter.toLowerCase() !== 'all zones') {
-        const isAllowed = callerAssigned.some(az => 
-          effectiveZoneFilter.toLowerCase().includes(az.toLowerCase()) || 
-          az.toLowerCase().includes(effectiveZoneFilter.toLowerCase())
-        );
+        const isAllowed = callerAssigned.some(az => {
+          const cleanAz = az.toLowerCase().replace(/zone/i, '').trim();
+          const cleanFz = effectiveZoneFilter.toLowerCase().replace(/zone/i, '').trim();
+          return effectiveZoneFilter.toLowerCase().includes(az.toLowerCase()) || 
+                 az.toLowerCase().includes(effectiveZoneFilter.toLowerCase()) ||
+                 (cleanAz && cleanFz && (cleanFz.includes(cleanAz) || cleanAz.includes(cleanFz)));
+        });
         if (!isAllowed) {
           effectiveZoneFilter = callerZone;
         }
@@ -674,7 +706,15 @@ router.get('/export', async (req, res) => {
           END AS status,
           'ICICI UPI' AS payment_method,
           COALESCE(ip.purpose, 'Ride / Booking') AS purpose,
-          COALESCE(r.pickup_zone, r.drop_zone, (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) LIMIT 1), 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(r.pickup_zone, ''),
+            NULLIF(r.drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT zone FROM vehicles WHERE code = r.vehicle_number OR registration_number = r.vehicle_number LIMIT 1),
+            (SELECT v.zone FROM vehicles v JOIN renters ren ON (v.code = ren.vehicle_id OR v.registration_number = ren.vehicle_id) WHERE ren.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND v.zone IS NOT NULL AND v.zone != '' ORDER BY ren.created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           ip.created_at
         FROM icici_payments ip
         LEFT JOIN reservations r ON (r.transaction_id = ip.tx_id OR r.reservation_id = ip.reservation_id)
@@ -744,7 +784,11 @@ router.get('/export', async (req, res) => {
           END AS status,
           'PhonePe' AS payment_method,
           COALESCE(ph.purpose, 'Ride Payment') AS purpose,
-          COALESCE((SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) LIMIT 1), 'Gotri Zone') AS zone,
+          COALESCE(
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ph.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           ph.created_at
         FROM phonepe_payments ph
         WHERE ph.mobile NOT LIKE '%1800%'
@@ -803,7 +847,12 @@ router.get('/export', async (req, res) => {
           'Successful' AS status,
           COALESCE(refund_mode, 'PayU') AS payment_method,
           'Security Deposit Refund' AS purpose,
-          COALESCE(pickup_zone, drop_zone, 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(pickup_zone, ''),
+            NULLIF(drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           COALESCE(refund_date, returned_at, created_at) AS created_at
         FROM reservations
         WHERE deposit_status = 'Refunded' AND COALESCE(refund_amount, deposit, 0) > 0
@@ -830,7 +879,12 @@ router.get('/export', async (req, res) => {
             ELSE COALESCE(payment_mode, 'Cash')
           END AS payment_method,
           'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')' AS purpose,
-          COALESCE(pickup_zone, drop_zone, 'Gotri Zone') AS zone,
+          COALESCE(
+            NULLIF(pickup_zone, ''),
+            NULLIF(drop_zone, ''),
+            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Gotri Zone'
+          ) AS zone,
           created_at
         FROM reservations
         WHERE payment_status = 'Paid' AND COALESCE(fare, 0) > 0
@@ -889,7 +943,11 @@ router.get('/export', async (req, res) => {
         const allowedZones = effectiveZoneFilter.split(',').map(z => z.trim().toLowerCase()).filter(Boolean);
         if (allowedZones.length > 0) {
           const recZone = (rec.zone || 'Gotri Zone').toLowerCase().trim();
-          const matched = allowedZones.some(az => recZone.includes(az) || az.includes(recZone));
+          const cleanRz = recZone.replace(/zone/i, '').trim();
+          const matched = allowedZones.some(az => {
+            const cleanAz = az.replace(/zone/i, '').trim();
+            return recZone.includes(az) || az.includes(recZone) || (cleanAz && cleanRz && (cleanRz.includes(cleanAz) || cleanAz.includes(cleanRz)));
+          });
           if (!matched) return false;
         }
       }

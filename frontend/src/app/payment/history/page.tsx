@@ -167,7 +167,7 @@ export default function PaymentHistoryPage() {
   const [methodFilter, setMethodFilter] = useState('all');
   const [selectedZone, setSelectedZone] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+      return localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || localStorage.getItem('evegah_user_zone') || 'All Zones';
     }
     return 'All Zones';
   });
@@ -194,7 +194,7 @@ export default function PaymentHistoryPage() {
   useEffect(() => {
     const updateZone = () => {
       if (typeof window !== 'undefined') {
-        const z = localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || 'All Zones';
+        const z = localStorage.getItem('evegah_active_zone') || localStorage.getItem('evegah_selected_zone') || localStorage.getItem('evegah_user_zone') || 'All Zones';
         setSelectedZone(z);
         setPage(1);
       }
@@ -382,7 +382,19 @@ export default function PaymentHistoryPage() {
             {/* Header */}
             <div className="ph-title-row">
               <div>
-                <h1 className="ph-h1">Live Payment History</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <h1 className="ph-h1" style={{ margin: 0 }}>Live Payment History</h1>
+                  <span style={{
+                    background: '#EEF2FF',
+                    color: '#4F46E5',
+                    padding: '3px 10px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 750
+                  }}>
+                    📍 {selectedZone}
+                  </span>
+                </div>
                 <p className="ph-sub">Real-time ledger of collections, deposits, refunds, and withdrawals across all payment gateways.</p>
               </div>
               <div className="ph-actions">
@@ -652,8 +664,41 @@ export default function PaymentHistoryPage() {
                       <tr>
                         <td colSpan={12} style={{ textAlign: 'center', padding: '50px 20px', color: '#64748B' }}>
                           <div style={{ fontSize: '32px', marginBottom: '8px' }}>💳</div>
-                          <div style={{ fontWeight: 700, fontSize: '15px', color: '#1E293B' }}>No Transactions Found</div>
-                          <div style={{ fontSize: '13px', marginTop: '4px' }}>Try adjusting your search query or status filter.</div>
+                          <div style={{ fontWeight: 750, fontSize: '15px', color: '#1E293B' }}>
+                            No Transactions Found in {selectedZone}
+                          </div>
+                          <div style={{ fontSize: '13px', marginTop: '4px', color: '#64748B' }}>
+                            {dateRange.start 
+                              ? `No transactions recorded for "${dateRange.text || 'this period'}" in ${selectedZone}.` 
+                              : `No payment transactions match the active search or filters.`}
+                          </div>
+                          {dateRange.start && (
+                            <button
+                              onClick={() => {
+                                setDateRange({ start: '', end: '', text: 'All Time' });
+                                if (typeof window !== 'undefined') {
+                                  localStorage.removeItem('evegah_filter_start_date');
+                                  localStorage.removeItem('evegah_filter_end_date');
+                                  localStorage.setItem('evegah_filter_date_text', 'All Time');
+                                }
+                                setPage(1);
+                              }}
+                              style={{
+                                marginTop: '14px',
+                                padding: '8px 16px',
+                                borderRadius: '8px',
+                                background: '#2A195C',
+                                color: '#FFF',
+                                border: 'none',
+                                fontWeight: 750,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                boxShadow: '0 2px 8px rgba(42, 25, 92, 0.2)'
+                              }}
+                            >
+                              Show All Time Collections for {selectedZone} →
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ) : (

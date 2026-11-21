@@ -1644,16 +1644,28 @@ function ZoneManagerRoleDashboard() {
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [activeKpiTable, setActiveKpiTable] = useState<'riders' | 'rentals' | 'revenue' | 'deposits' | 'active_rides' | null>(null);
+  const [tableSearch, setTableSearch] = useState('');
+  const [copiedTxId, setCopiedTxId] = useState<string | null>(null);
 
   // Date Filter State
-    const [startDate, setStartDate] = useState<string>('');
-    const [endDate, setEndDate] = useState<string>('');
-    const [dateRangeText, setDateRangeText] = useState<string>('This Month');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [dateRangeText, setDateRangeText] = useState<string>('This Month');
 
-    const showToast = (msg: string) => {
-      setToastMessage(msg);
-      setTimeout(() => setToastMessage(null), 3500);
-    };
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  const handleCopyTx = (tx: string) => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(tx);
+      setCopiedTxId(tx);
+      showToast(`Copied: ${tx}`);
+      setTimeout(() => setCopiedTxId(null), 2000);
+    }
+  };
 
     // Fetch Stats from Backend API
     const fetchZoneStats = async (zoneName: string, start?: string, end?: string) => {
@@ -1797,10 +1809,11 @@ function ZoneManagerRoleDashboard() {
             </div>
           </div>
 
-          {/* 5 Top KPI Cards matching Active Ride Page Card Design */}
+          {/* 5 Top KPI Cards matching Active Ride Page Card Design (Interactive Drop-Down style) */}
           <div className="ar-stats-row" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: '16px' }}>
             {[
               {
+                id: 'riders',
                 label: 'TOTAL RIDERS',
                 val: kpis?.totalRiders?.value ?? 0,
                 change: kpis?.totalRiders?.change ?? '12.4% vs last period',
@@ -1816,6 +1829,7 @@ function ZoneManagerRoleDashboard() {
                 )
               },
               {
+                id: 'rentals',
                 label: 'TOTAL RENTALS',
                 val: kpis?.totalRentals?.value ?? 0,
                 change: kpis?.totalRentals?.change ?? '15.2% vs last period',
@@ -1832,6 +1846,7 @@ function ZoneManagerRoleDashboard() {
                 )
               },
               {
+                id: 'revenue',
                 label: 'REVENUE',
                 val: kpis?.revenue?.value ?? '₹0',
                 change: kpis?.revenue?.change ?? '18.5% vs last period',
@@ -1842,6 +1857,7 @@ function ZoneManagerRoleDashboard() {
                 )
               },
               {
+                id: 'deposits',
                 label: 'TOTAL DEPOSIT',
                 val: kpis?.totalDeposit?.value ?? '₹0',
                 change: kpis?.totalDeposit?.change ?? 'Secured',
@@ -1854,6 +1870,7 @@ function ZoneManagerRoleDashboard() {
                 )
               },
               {
+                id: 'active_rides',
                 label: 'ACTIVE RIDES',
                 val: `${kpis?.activeRides?.value ?? 0} Rides`,
                 change: kpis?.activeRides?.change ?? 'On road now',
@@ -1865,23 +1882,517 @@ function ZoneManagerRoleDashboard() {
                   </svg>
                 )
               }
-            ].map(k => (
-              <div key={k.label} className="ar-stat-card">
-                <div className="ar-stat-ic" style={{ background: k.bg }}>
-                  {k.ic}
+            ].map(k => {
+              const isSelected = activeKpiTable === k.id;
+              return (
+                <div 
+                  key={k.id} 
+                  className="ar-stat-card"
+                  onClick={() => {
+                    setActiveKpiTable(prev => prev === k.id ? null : (k.id as any));
+                    setTableSearch('');
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    border: isSelected ? `2.5px solid ${k.bg}` : '1.5px solid #E2E8F0',
+                    boxShadow: isSelected ? `0 10px 25px -4px ${k.bg}35, 0 2px 6px -1px rgba(0,0,0,0.06)` : '0 1px 2px rgba(0,0,0,.02)',
+                    transform: isSelected ? 'translateY(-2px)' : 'none',
+                    background: isSelected ? '#FAF8FF' : '#FFF',
+                    position: 'relative',
+                    transition: 'all 0.18s ease'
+                  }}
+                  title={`Click to ${isSelected ? 'collapse' : 'expand'} ${k.label} table`}
+                >
+                  <div className="ar-stat-ic" style={{ background: k.bg }}>
+                    {k.ic}
+                  </div>
+                  <div className="ar-stat-info" style={{ minWidth: 0, flex: 1 }}>
+                    <div className="ar-stat-lbl">{k.label}</div>
+                    <div className="ar-stat-val">
+                      <AnimatedCount value={k.val} />
+                    </div>
+                    <div className="ar-stat-trend" style={{ color: k.trendColor, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
+                      <span><span style={{ fontSize: 8 }}>▲</span> {k.change}</span>
+                      <span style={{
+                        fontSize: '9.5px',
+                        fontWeight: 800,
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        background: isSelected ? k.bg : '#F1F5F9',
+                        color: isSelected ? '#FFF' : '#64748B',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {isSelected ? '▲ Open' : '▼ Table'}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="ar-stat-info">
-                  <div className="ar-stat-lbl">{k.label}</div>
-                  <div className="ar-stat-val">
-                    <AnimatedCount value={k.val} />
+              );
+            })}
+          </div>
+
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {/* ── INTERACTIVE DROP-DOWN KPI TABLE PANEL (BY DEFAULT HIDDEN) ──── */}
+          {/* ══════════════════════════════════════════════════════════════════ */}
+          {activeKpiTable && (
+            <div 
+              className="sa-card" 
+              style={{ 
+                marginBottom: '18px', 
+                border: '2px solid #6366F1',
+                boxShadow: '0 12px 30px -5px rgba(99, 102, 241, 0.15)',
+                animation: 'evMenuFade 0.2s ease-out'
+              }}
+            >
+              <div className="sa-card-hdr" style={{ background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', padding: '12px 18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '18px' }}>
+                    {activeKpiTable === 'active_rides' && '⚡'}
+                    {activeKpiTable === 'riders' && '👤'}
+                    {activeKpiTable === 'rentals' && '🛵'}
+                    {activeKpiTable === 'revenue' && '💳'}
+                    {activeKpiTable === 'deposits' && '🛡️'}
+                  </span>
+                  <span className="sa-card-title" style={{ fontSize: '15px', fontWeight: 800 }}>
+                    {activeKpiTable === 'active_rides' && `Active Rides Telemetry — ${activeZone}`}
+                    {activeKpiTable === 'riders' && `Rider Directory & Subscriptions — ${activeZone}`}
+                    {activeKpiTable === 'rentals' && `Rentals & Booking History — ${activeZone}`}
+                    {activeKpiTable === 'revenue' && `Payment History & Revenue Collections — ${activeZone}`}
+                    {activeKpiTable === 'deposits' && `Security Deposits Ledger — ${activeZone}`}
+                  </span>
+                  <span style={{
+                    background: '#2A195C',
+                    color: '#FFF',
+                    padding: '3px 9px',
+                    borderRadius: '12px',
+                    fontSize: '11px',
+                    fontWeight: 750
+                  }}>
+                    {activeKpiTable === 'active_rides' && `${(stats?.activeRides || []).length} Records`}
+                    {activeKpiTable === 'riders' && `${(stats?.riders || []).length} Riders`}
+                    {activeKpiTable === 'rentals' && `${(stats?.rentals || []).length} Bookings`}
+                    {activeKpiTable === 'revenue' && `${(stats?.revenuePayments || []).length} Transactions`}
+                    {activeKpiTable === 'deposits' && `${(stats?.deposits || []).length} Deposits`}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {/* Search inside table */}
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type="text"
+                      value={tableSearch}
+                      onChange={e => setTableSearch(e.target.value)}
+                      placeholder="Quick filter..."
+                      style={{
+                        padding: '6px 12px 6px 28px',
+                        border: '1.5px solid #CBD5E1',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        outline: 'none',
+                        width: '180px',
+                        fontWeight: 500
+                      }}
+                    />
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" style={{ position: 'absolute', left: '9px', top: '50%', transform: 'translateY(-50%)' }}>
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
                   </div>
-                  <div className="ar-stat-trend" style={{ color: k.trendColor }}>
-                    <span style={{ fontSize: 8 }}>▲</span> {k.change}
-                  </div>
+
+                  {activeKpiTable === 'revenue' && (
+                    <a href="/payment/history" className="sa-link-all" style={{ fontSize: '12px', fontWeight: 700 }}>Full Payment Page →</a>
+                  )}
+                  {activeKpiTable === 'riders' && (
+                    <a href="/renters" className="sa-link-all" style={{ fontSize: '12px', fontWeight: 700 }}>Renter Directory →</a>
+                  )}
+                  {activeKpiTable === 'rentals' && (
+                    <a href="/renters/reserved" className="sa-link-all" style={{ fontSize: '12px', fontWeight: 700 }}>All Reservations →</a>
+                  )}
+                  {activeKpiTable === 'deposits' && (
+                    <a href="/payment/deposit-refunds" className="sa-link-all" style={{ fontSize: '12px', fontWeight: 700 }}>Deposit Refunds →</a>
+                  )}
+
+                  <button
+                    onClick={() => setActiveKpiTable(null)}
+                    style={{
+                      background: '#F1F5F9',
+                      border: '1px solid #CBD5E1',
+                      borderRadius: '8px',
+                      padding: '5px 10px',
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      color: '#475569',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕ Close
+                  </button>
                 </div>
               </div>
-            ))}
-          </div>
+
+              <div className="sa-card-body" style={{ padding: 0 }}>
+                {/* ── 1. ACTIVE RIDES TABLE ── */}
+                {activeKpiTable === 'active_rides' && (() => {
+                  const list = (stats?.activeRides || []).filter((r: any) => {
+                    if (!tableSearch) return true;
+                    const q = tableSearch.toLowerCase();
+                    return (r.rider_name || '').toLowerCase().includes(q) ||
+                           (r.mobile || '').toLowerCase().includes(q) ||
+                           (r.vehicle_number || '').toLowerCase().includes(q) ||
+                           (r.battery_id || '').toLowerCase().includes(q);
+                  });
+
+                  return (
+                    <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+                      {!stats?.hasOngoingRides && (
+                        <div style={{ background: '#FFFBEB', padding: '10px 18px', borderBottom: '1px solid #FDE68A', fontSize: '12px', color: '#92400E', fontWeight: 600 }}>
+                          ℹ️ No active trips currently on road in {activeZone}. Displaying recent fleet ride records in this zone:
+                        </div>
+                      )}
+                      <table className="ev-table" style={{ margin: 0 }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
+                          <tr>
+                            <th>Rider / Customer</th>
+                            <th>Mobile</th>
+                            <th>Vehicle Number</th>
+                            <th>Battery Assigned</th>
+                            <th>Package / Pass</th>
+                            <th>Start Date &amp; Time</th>
+                            <th>Return Schedule</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.length === 0 ? (
+                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No ride records found matching filter.</td></tr>
+                          ) : (
+                            list.map((r: any, idx: number) => (
+                              <tr key={r.id || idx}>
+                                <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
+                                <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
+                                <td>
+                                  <span style={{ background: '#EEF2FF', color: '#4F46E5', padding: '3px 8px', borderRadius: '6px', fontWeight: 750, fontSize: '11.5px' }}>
+                                    {r.vehicle_number}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '12px', color: '#334155', fontWeight: 600 }}>{r.battery_id}</td>
+                                <td style={{ fontWeight: 600 }}>{r.package_name}</td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                  {r.start_date ? new Date(r.start_date).toLocaleString('en-IN') : '-'}
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                  {r.return_date ? new Date(r.return_date).toLocaleString('en-IN') : '-'}
+                                </td>
+                                <td>
+                                  <span className={`sa-badge ${r.status === 'Active' || r.status === 'In Ride' || r.status === 'Active Ride' ? 'sa-badge-green' : r.status === 'Return' ? 'sa-badge-blue' : 'sa-badge-orange'}`}>
+                                    {r.status}
+                                  </span>
+                                </td>
+                                <td>
+                                  <a href={`/renters/profile?mobile=${encodeURIComponent(r.mobile || '')}`} className="sa-btn-table" style={{ fontSize: '11px', padding: '4px 8px' }}>
+                                    Profile →
+                                  </a>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* ── 2. TOTAL RIDERS TABLE ── */}
+                {activeKpiTable === 'riders' && (() => {
+                  const list = (stats?.riders || []).filter((r: any) => {
+                    if (!tableSearch) return true;
+                    const q = tableSearch.toLowerCase();
+                    return (r.rider_name || '').toLowerCase().includes(q) ||
+                           (r.mobile || '').toLowerCase().includes(q) ||
+                           (r.rider_id || '').toLowerCase().includes(q) ||
+                           (r.package_name || '').toLowerCase().includes(q);
+                  });
+
+                  return (
+                    <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+                      <table className="ev-table" style={{ margin: 0 }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
+                          <tr>
+                            <th>Rider ID</th>
+                            <th>Rider Name</th>
+                            <th>Mobile</th>
+                            <th>Vehicle Assigned</th>
+                            <th>Battery</th>
+                            <th>Package Plan</th>
+                            <th>KYC Status</th>
+                            <th>Ride Status</th>
+                            <th>Rent / Fare</th>
+                            <th>Deposit</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.length === 0 ? (
+                            <tr><td colSpan={11} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No riders found matching filter.</td></tr>
+                          ) : (
+                            list.map((r: any, idx: number) => (
+                              <tr key={r.id || idx}>
+                                <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#2A195C', fontSize: '11.5px' }}>{r.rider_id}</td>
+                                <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
+                                <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
+                                <td>
+                                  <span style={{ background: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '11.5px' }}>
+                                    {r.vehicle_id}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#475569' }}>{r.battery_id}</td>
+                                <td style={{ fontWeight: 600 }}>{r.package_name}</td>
+                                <td>
+                                  <span className={`sa-badge ${r.kyc_status === 'Verified' ? 'sa-badge-green' : 'sa-badge-orange'}`}>
+                                    {r.kyc_status}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span className={`sa-badge ${r.status === 'Active' ? 'sa-badge-green' : r.status === 'Return' ? 'sa-badge-blue' : 'sa-badge-orange'}`}>
+                                    {r.status}
+                                  </span>
+                                </td>
+                                <td style={{ fontWeight: 800, color: '#0F172A' }}>₹{parseFloat(r.rent || 0).toLocaleString('en-IN')}</td>
+                                <td style={{ fontWeight: 700, color: '#10B981' }}>₹{parseFloat(r.deposit || 0).toLocaleString('en-IN')}</td>
+                                <td>
+                                  <a href={`/renters/profile?mobile=${encodeURIComponent(r.mobile || '')}`} className="sa-btn-table" style={{ fontSize: '11px', padding: '4px 8px' }}>
+                                    Profile →
+                                  </a>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* ── 3. TOTAL RENTALS TABLE ── */}
+                {activeKpiTable === 'rentals' && (() => {
+                  const list = (stats?.rentals || []).filter((r: any) => {
+                    if (!tableSearch) return true;
+                    const q = tableSearch.toLowerCase();
+                    return (r.rental_id || '').toLowerCase().includes(q) ||
+                           (r.customer_name || '').toLowerCase().includes(q) ||
+                           (r.mobile || '').toLowerCase().includes(q) ||
+                           (r.vehicle_number || '').toLowerCase().includes(q);
+                  });
+
+                  return (
+                    <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+                      <table className="ev-table" style={{ margin: 0 }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
+                          <tr>
+                            <th>Booking / Rental ID</th>
+                            <th>Customer Name</th>
+                            <th>Mobile</th>
+                            <th>Vehicle Number</th>
+                            <th>Plan / Package</th>
+                            <th>Fare</th>
+                            <th>Deposit</th>
+                            <th>Payment</th>
+                            <th>Status</th>
+                            <th>Booking Date</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.length === 0 ? (
+                            <tr><td colSpan={10} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No rentals found matching filter.</td></tr>
+                          ) : (
+                            list.map((r: any, idx: number) => (
+                              <tr key={r.id || idx}>
+                                <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#10B981' }}>{r.rental_id}</td>
+                                <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.customer_name}</td>
+                                <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
+                                <td>
+                                  <span style={{ background: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '11.5px' }}>
+                                    {r.vehicle_number}
+                                  </span>
+                                </td>
+                                <td style={{ fontWeight: 600 }}>{r.package_plan}</td>
+                                <td style={{ fontWeight: 800, color: '#0F172A' }}>₹{parseFloat(r.fare || 0).toLocaleString('en-IN')}</td>
+                                <td style={{ fontWeight: 700, color: '#10B981' }}>₹{parseFloat(r.deposit || 0).toLocaleString('en-IN')}</td>
+                                <td>
+                                  <span className={`sa-badge ${r.payment_status === 'Paid' ? 'sa-badge-green' : 'sa-badge-orange'}`}>
+                                    {r.payment_status}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span className={`sa-badge ${r.status === 'Active' || r.status === 'Active Ride' ? 'sa-badge-green' : r.status === 'Completed' || r.status === 'Return' ? 'sa-badge-blue' : 'sa-badge-orange'}`}>
+                                    {r.status}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                  {r.created_at ? new Date(r.created_at).toLocaleString('en-IN') : '-'}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* ── 4. REVENUE & PAYMENT HISTORY TABLE ── */}
+                {activeKpiTable === 'revenue' && (() => {
+                  const list = (stats?.revenuePayments || []).filter((r: any) => {
+                    if (!tableSearch) return true;
+                    const q = tableSearch.toLowerCase();
+                    return (r.tx_id || '').toLowerCase().includes(q) ||
+                           (r.reference_id || '').toLowerCase().includes(q) ||
+                           (r.rider_name || '').toLowerCase().includes(q) ||
+                           (r.mobile || '').toLowerCase().includes(q) ||
+                           (r.payment_method || '').toLowerCase().includes(q);
+                  });
+
+                  return (
+                    <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+                      <table className="ev-table" style={{ margin: 0 }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
+                          <tr>
+                            <th>Transaction ID</th>
+                            <th>Customer / Rider</th>
+                            <th>Mobile</th>
+                            <th>Payment Gateway</th>
+                            <th>Purpose</th>
+                            <th>Amount Paid</th>
+                            <th>Status</th>
+                            <th>Transaction Date</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.length === 0 ? (
+                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No payment records found for this zone.</td></tr>
+                          ) : (
+                            list.map((r: any, idx: number) => (
+                              <tr key={r.id || idx}>
+                                <td>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: '11px', color: '#1E293B' }}>{r.tx_id}</span>
+                                    <button
+                                      onClick={() => handleCopyTx(r.tx_id)}
+                                      style={{
+                                        border: '1px solid #E2E8F0',
+                                        background: copiedTxId === r.tx_id ? '#10B981' : '#FFF',
+                                        color: copiedTxId === r.tx_id ? '#FFF' : '#64748B',
+                                        borderRadius: '4px',
+                                        padding: '2px 5px',
+                                        fontSize: '9.5px',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      {copiedTxId === r.tx_id ? '✓' : 'Copy'}
+                                    </button>
+                                  </div>
+                                </td>
+                                <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
+                                <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
+                                <td>
+                                  <span style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '3px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '11.5px' }}>
+                                    {r.payment_method}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#475569' }}>{r.purpose}</td>
+                                <td style={{ fontWeight: 800, color: '#15803D', fontSize: '13.5px' }}>+₹{parseFloat(r.amount || 0).toLocaleString('en-IN')}</td>
+                                <td>
+                                  <span className={`sa-badge ${r.status === 'Successful' ? 'sa-badge-green' : r.status === 'Pending' ? 'sa-badge-blue' : 'sa-badge-red'}`}>
+                                    {r.status}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                  {r.created_at ? new Date(r.created_at).toLocaleString('en-IN') : '-'}
+                                </td>
+                                <td>
+                                  <a href={`/payment/history?search=${encodeURIComponent(r.tx_id || '')}`} className="sa-btn-table" style={{ fontSize: '11px', padding: '4px 8px' }}>
+                                    Ledger →
+                                  </a>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                {/* ── 5. TOTAL DEPOSITS TABLE ── */}
+                {activeKpiTable === 'deposits' && (() => {
+                  const list = (stats?.deposits || []).filter((r: any) => {
+                    if (!tableSearch) return true;
+                    const q = tableSearch.toLowerCase();
+                    return (r.record_id || '').toLowerCase().includes(q) ||
+                           (r.rider_name || '').toLowerCase().includes(q) ||
+                           (r.mobile || '').toLowerCase().includes(q) ||
+                           (r.vehicle_number || '').toLowerCase().includes(q);
+                  });
+
+                  return (
+                    <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
+                      <table className="ev-table" style={{ margin: 0 }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
+                          <tr>
+                            <th>Deposit Record ID</th>
+                            <th>Rider / Customer</th>
+                            <th>Mobile</th>
+                            <th>Vehicle Assigned</th>
+                            <th>Deposit Amount</th>
+                            <th>Deposit Status</th>
+                            <th>Source</th>
+                            <th>Date Recorded</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.length === 0 ? (
+                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No deposit records found for this zone.</td></tr>
+                          ) : (
+                            list.map((r: any, idx: number) => (
+                              <tr key={r.id || idx}>
+                                <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#059669' }}>{r.record_id}</td>
+                                <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
+                                <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
+                                <td>
+                                  <span style={{ background: '#F1F5F9', padding: '3px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '11.5px' }}>
+                                    {r.vehicle_number}
+                                  </span>
+                                </td>
+                                <td style={{ fontWeight: 800, color: '#059669', fontSize: '13.5px' }}>₹{parseFloat(r.deposit_amount || 0).toLocaleString('en-IN')}</td>
+                                <td>
+                                  <span className={`sa-badge ${r.deposit_status === 'Refunded' ? 'sa-badge-orange' : 'sa-badge-green'}`}>
+                                    {r.deposit_status}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>{r.source}</td>
+                                <td style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                  {r.created_at ? new Date(r.created_at).toLocaleString('en-IN') : '-'}
+                                </td>
+                                <td>
+                                  <a href={`/payment/deposit-refunds`} className="sa-btn-table" style={{ fontSize: '11px', padding: '4px 8px' }}>
+                                    Refunds →
+                                  </a>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
 
           {/* Row 1 Grid: Line Chart (Demand Trend) & Doughnut Chart (Battery SOC) */}
           <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '16px', marginTop: '4px' }}>

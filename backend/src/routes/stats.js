@@ -647,7 +647,13 @@ router.get('/zone-admin', async (req, res) => {
       allTimeRidersRes,
       allTimeRentalsRes,
       allTimeRevenueRes,
-      allTimeDepositRes
+      allTimeDepositRes,
+      activeRidesListRes,
+      ridersListRes,
+      rentalsListRes,
+      revenuePaymentsListRes,
+      depositsListRes,
+      fallbackRecentRidesRes
     ] = await Promise.all([
       // Period unique riders in this zone (Cross-platform: renters + reservations)
       db.query(`
@@ -742,16 +748,248 @@ router.get('/zone-admin', async (req, res) => {
         ) as total
       `, zoneParams),
       db.query(`
-        SELECT (
-          (SELECT COALESCE(SUM(fare::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause}) +
-          (SELECT COALESCE(SUM(rent::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause})
-        ) as total
+        SELECT COALESCE(SUM(amount), 0) as total FROM (
+          SELECT pp.amount::numeric as amount
+          FROM payu_payments pp
+          LEFT JOIN reservations r ON (r.transaction_id = pp.tx_id OR r.reservation_id = pp.reservation_id)
+          WHERE pp.status = 'Success' ${zone ? `AND (
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $1 OR
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $2
+          )` : ''}
+          UNION ALL
+          SELECT ip.amount::numeric as amount
+          FROM icici_payments ip
+          LEFT JOIN reservations r ON (r.transaction_id = ip.tx_id OR r.reservation_id = ip.reservation_id)
+          WHERE UPPER(ip.status) = 'SUCCESS' ${zone ? `AND (
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $1 OR
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ip.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $2
+          )` : ''}
+          UNION ALL
+          SELECT COALESCE(res.fare, 0)::numeric as amount
+          FROM reservations res
+          WHERE res.payment_status = 'Paid'
+            AND (res.payment_mode ILIKE '%cash%' OR res.payment_mode IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM payu_payments pp WHERE pp.tx_id = res.transaction_id OR pp.reservation_id = res.reservation_id)
+            AND NOT EXISTS (SELECT 1 FROM icici_payments ip WHERE ip.tx_id = res.transaction_id OR ip.reservation_id = res.reservation_id)
+            ${zoneResvClause}
+        ) all_rev
       `, zoneParams),
       db.query(`
         SELECT (
           (SELECT COALESCE(SUM(deposit::numeric), 0) FROM reservations WHERE status != 'Cancelled' ${zoneResvClause}) +
           (SELECT COALESCE(SUM(deposit::numeric), 0) FROM renters WHERE status != 'Cancelled' ${zoneRenterClause})
         ) as total
+      `, zoneParams),
+
+      // Interactive Dropdown KPI Tables:
+      // 1. Active Rides List
+      db.query(`
+        SELECT 
+          r.id::text,
+          COALESCE(r.rider_name, 'Rider') as rider_name,
+          r.mobile,
+          COALESCE(r.vehicle_id, 'Pending') as vehicle_number,
+          COALESCE(r.battery_id, 'Assigned') as battery_id,
+          COALESCE(r.package_name, 'Rental Plan') as package_name,
+          r.rental_start_date as start_date,
+          r.return_date,
+          r.status,
+          'Subscription' as ride_type
+        FROM renters r
+        WHERE r.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed')
+          ${zoneRenterClause}
+        UNION ALL
+        SELECT
+          res.id::text,
+          COALESCE(res.customer_name, 'Rider') as rider_name,
+          res.mobile,
+          COALESCE(res.vehicle_number, 'Pending') as vehicle_number,
+          'Battery Assigned' as battery_id,
+          COALESCE(res.package_type, 'Reservation') as package_name,
+          res.created_at as start_date,
+          res.created_at as return_date,
+          res.status,
+          'Booking' as ride_type
+        FROM reservations res
+        WHERE res.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing')
+          ${zoneResvClause}
+        ORDER BY start_date DESC
+        LIMIT 50
+      `, zoneParams),
+
+      // 2. Total Riders List
+      db.query(`
+        SELECT 
+          r.id::text,
+          COALESCE(r.rider_id, 'EVR-' || SUBSTRING(r.id::text, 1, 8)) as rider_id,
+          r.rider_name,
+          r.mobile,
+          COALESCE(r.vehicle_id, '-') as vehicle_id,
+          COALESCE(r.battery_id, '-') as battery_id,
+          COALESCE(r.package_name, 'Standard Plan') as package_name,
+          r.status,
+          COALESCE(r.kyc_status, 'Verified') as kyc_status,
+          r.rental_start_date,
+          r.return_date,
+          COALESCE(r.rent, 0) as rent,
+          COALESCE(r.deposit, 0) as deposit,
+          COALESCE(r.zone, 'Gotri Zone') as zone,
+          r.created_at
+        FROM renters r
+        WHERE 1=1 ${zoneRenterClause}
+        ORDER BY r.created_at DESC
+        LIMIT 50
+      `, zoneParams),
+
+      // 3. Total Rentals List
+      db.query(`
+        SELECT 
+          res.id::text as id,
+          COALESCE(res.reservation_id, 'RES-' || SUBSTRING(res.id::text, 1, 8)) as rental_id,
+          COALESCE(res.customer_name, 'Customer') as customer_name,
+          res.mobile,
+          COALESCE(res.vehicle_number, 'Pending') as vehicle_number,
+          COALESCE(res.package_type, 'Pass') as package_plan,
+          COALESCE(res.fare, 0) as fare,
+          COALESCE(res.deposit, 0) as deposit,
+          COALESCE(res.payment_status, 'Paid') as payment_status,
+          res.status,
+          res.created_at,
+          'Reservation' as type
+        FROM reservations res
+        WHERE 1=1 ${zoneResvClause}
+        UNION ALL
+        SELECT 
+          ren.id::text as id,
+          'SUB-' || SUBSTRING(ren.id::text, 1, 8) as rental_id,
+          ren.rider_name as customer_name,
+          ren.mobile,
+          COALESCE(ren.vehicle_id, 'Pending') as vehicle_number,
+          COALESCE(ren.package_name, 'Subscription') as package_plan,
+          COALESCE(ren.rent, 0) as fare,
+          COALESCE(ren.deposit, 0) as deposit,
+          'Paid' as payment_status,
+          ren.status,
+          ren.created_at,
+          'Renter Subscription' as type
+        FROM renters ren
+        WHERE 1=1 ${zoneRenterClause}
+        ORDER BY created_at DESC
+        LIMIT 50
+      `, zoneParams),
+
+      // 4. Revenue & Payment History List
+      db.query(`
+        SELECT 
+          pp.id::text,
+          pp.tx_id,
+          COALESCE(pp.payu_id, pp.bank_ref_num, pp.tx_id) as reference_id,
+          COALESCE(
+            NULLIF(pp.rider_name, 'Rider'),
+            r.customer_name,
+            (SELECT rider_name FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            'Evegah Rider'
+          ) AS rider_name,
+          pp.mobile,
+          pp.amount::numeric as amount,
+          'Credit' as type,
+          CASE WHEN UPPER(pp.status) = 'SUCCESS' THEN 'Successful' WHEN UPPER(pp.status) = 'PENDING' THEN 'Pending' ELSE 'Failed' END as status,
+          'PayU India' as payment_method,
+          COALESCE(pp.purpose, 'Ride Payment') as purpose,
+          pp.created_at
+        FROM payu_payments pp
+        LEFT JOIN reservations r ON (r.transaction_id = pp.tx_id OR r.reservation_id = pp.reservation_id)
+        WHERE pp.status NOT IN ('Refund_Failed', 'Refunded')
+          ${zone ? `AND (
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $1 OR
+            COALESCE(
+              NULLIF(r.pickup_zone, ''),
+              NULLIF(r.drop_zone, ''),
+              (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+              (SELECT pickup_zone FROM reservations WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(pp.mobile, '\\D', '', 'g'), 10) AND pickup_zone IS NOT NULL AND pickup_zone != '' ORDER BY created_at DESC LIMIT 1),
+              'Gotri Zone'
+            ) ILIKE $2
+          )` : ''}
+        ORDER BY pp.created_at DESC
+        LIMIT 50
+      `, zoneParams),
+
+      // 5. Deposits Ledger List
+      db.query(`
+        SELECT 
+          ren.id::text as id,
+          'DEP-' || SUBSTRING(ren.id::text, 1, 8) as record_id,
+          ren.rider_name,
+          ren.mobile,
+          COALESCE(ren.vehicle_id, '-') as vehicle_number,
+          ren.deposit as deposit_amount,
+          CASE WHEN ren.status = 'Return' THEN 'Eligible for Refund' ELSE 'Secured' END as deposit_status,
+          ren.created_at,
+          'Renter Deposit' as source
+        FROM renters ren
+        WHERE COALESCE(ren.deposit, 0) > 0 ${zoneRenterClause}
+        UNION ALL
+        SELECT 
+          res.id::text as id,
+          'RES-DEP-' || SUBSTRING(res.id::text, 1, 8) as record_id,
+          res.customer_name as rider_name,
+          res.mobile,
+          COALESCE(res.vehicle_number, '-') as vehicle_number,
+          res.deposit as deposit_amount,
+          COALESCE(res.deposit_status, 'Secured') as deposit_status,
+          res.created_at,
+          'Reservation Deposit' as source
+        FROM reservations res
+        WHERE COALESCE(res.deposit, 0) > 0 ${zoneResvClause}
+        ORDER BY created_at DESC
+        LIMIT 50
+      `, zoneParams),
+
+      // Fallback Recent Rides if Active count is 0
+      db.query(`
+        SELECT 
+          r.id::text,
+          COALESCE(r.rider_name, 'Rider') as rider_name,
+          r.mobile,
+          COALESCE(r.vehicle_id, 'Pending') as vehicle_number,
+          COALESCE(r.battery_id, 'Assigned') as battery_id,
+          COALESCE(r.package_name, 'Rental Plan') as package_name,
+          r.rental_start_date as start_date,
+          r.return_date,
+          r.status,
+          'Subscription' as ride_type
+        FROM renters r
+        WHERE 1=1 ${zoneRenterClause}
+        ORDER BY r.created_at DESC
+        LIMIT 20
       `, zoneParams)
     ]);
 
@@ -845,7 +1083,15 @@ router.get('/zone-admin', async (req, res) => {
         recentReservations: recentReservationsList,
         riderPaymentDue: paymentDueRes.rows,
         draftRegistrations: draftRes.rows,
-        telemetryFleet: allVehRes.rows
+        telemetryFleet: allVehRes.rows,
+        activeRides: (activeRidesListRes && activeRidesListRes.rows && activeRidesListRes.rows.length > 0) 
+          ? activeRidesListRes.rows 
+          : (fallbackRecentRidesRes ? fallbackRecentRidesRes.rows : []),
+        hasOngoingRides: Boolean(activeRidesListRes && activeRidesListRes.rows && activeRidesListRes.rows.length > 0),
+        riders: ridersListRes ? ridersListRes.rows : [],
+        rentals: rentalsListRes ? rentalsListRes.rows : [],
+        revenuePayments: revenuePaymentsListRes ? revenuePaymentsListRes.rows : [],
+        deposits: depositsListRes ? depositsListRes.rows : []
       }
     });
   } catch (err) {
