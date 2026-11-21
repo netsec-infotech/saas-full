@@ -228,6 +228,7 @@ export default function PaymentHistoryPage() {
         search: search.trim(),
         type: typeFilter,
         status: statusFilter,
+        method: methodFilter,
         zone: selectedZone !== 'All Zones' ? selectedZone : '',
         from_date: dateRange.start || '',
         to_date: dateRange.end || ''
@@ -251,7 +252,7 @@ export default function PaymentHistoryPage() {
 
   useEffect(() => {
     fetchPaymentHistory();
-  }, [page, limit, typeFilter, statusFilter, selectedZone, dateRange]);
+  }, [page, limit, typeFilter, statusFilter, methodFilter, selectedZone, dateRange]);
 
   // Debounced search
   useEffect(() => {
@@ -262,19 +263,57 @@ export default function PaymentHistoryPage() {
     return () => clearTimeout(t);
   }, [search]);
 
-  // Filter client-side by method if needed
+  // Table Column Sorting State
+  const [sortColumn, setSortColumn] = useState<string>('created_at');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(columnKey);
+      setSortDirection('asc');
+    }
+  };
+
+  // Filter client-side by method if needed and sort by selected column
   const displayRecords = useMemo(() => {
-    if (methodFilter === 'all') return records;
-    return records.filter(r => {
-      const pm = (r.payment_method || '').toLowerCase();
-      if (methodFilter === 'icici') return pm.includes('icici');
-      if (methodFilter === 'payu') return pm.includes('payu');
-      if (methodFilter === 'phonepe') return pm.includes('phonepe');
-      if (methodFilter === 'wallet') return pm.includes('wallet');
-      if (methodFilter === 'razorpay') return pm.includes('razorpay');
-      return true;
+    let list = records;
+    if (methodFilter !== 'all') {
+      list = records.filter(r => {
+        const pm = (r.payment_method || '').toLowerCase();
+        if (methodFilter === 'cash') return pm.includes('cash') || pm.includes('counter');
+        if (methodFilter === 'icici') return pm.includes('icici');
+        if (methodFilter === 'payu') return pm.includes('payu');
+        if (methodFilter === 'phonepe') return pm.includes('phonepe');
+        if (methodFilter === 'wallet') return pm.includes('wallet');
+        if (methodFilter === 'razorpay') return pm.includes('razorpay');
+        return true;
+      });
+    }
+
+    if (!sortColumn) return list;
+
+    return [...list].sort((a: any, b: any) => {
+      let aVal = a[sortColumn];
+      let bVal = b[sortColumn];
+
+      if (sortColumn === 'created_at') {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      } else if (['amount', 'rent_amount', 'deposit_amount'].includes(sortColumn)) {
+        aVal = parseFloat(aVal || 0);
+        bVal = parseFloat(bVal || 0);
+      } else {
+        aVal = (aVal || '').toString().toLowerCase();
+        bVal = (bVal || '').toString().toLowerCase();
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
     });
-  }, [records, methodFilter]);
+  }, [records, methodFilter, sortColumn, sortDirection]);
 
   // Keep the date/time value as one visual unit. This prevents the browser from
   // creating awkward wrapped/repeated-looking time fragments inside the table.
@@ -305,6 +344,33 @@ export default function PaymentHistoryPage() {
   const toggleSelectOne = (id: string) => {
     setSelectedIds(prev => 
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const renderSortHeader = (label: string, colKey: string) => {
+    const isSorted = sortColumn === colKey;
+    return (
+      <th
+        onClick={() => handleSort(colKey)}
+        style={{
+          cursor: 'pointer',
+          userSelect: 'none',
+          whiteSpace: 'nowrap',
+          transition: 'background-color 0.15s ease'
+        }}
+        title={`Click to sort by ${label} (${isSorted && sortDirection === 'asc' ? 'descending' : 'ascending'})`}
+      >
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6
+        }}>
+          <span>{label}</span>
+          <span style={{ fontSize: 10, color: isSorted ? '#4318FF' : '#94A3B8', fontWeight: 800 }}>
+            {isSorted ? (sortDirection === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        </div>
+      </th>
     );
   };
 
@@ -595,8 +661,9 @@ export default function PaymentHistoryPage() {
                     onChange={(e) => setMethodFilter(e.target.value)}
                   >
                     <option value="all">All Gateways &amp; Methods</option>
-                    <option value="icici">ICICI Bank UPI</option>
+                    <option value="cash">Cash / Counter</option>
                     <option value="payu">PayU</option>
+                    <option value="icici">ICICI Bank UPI</option>
                     <option value="phonepe">PhonePe</option>
                     <option value="wallet">Wallet Transactions</option>
                     <option value="razorpay">Razorpay</option>
@@ -639,16 +706,16 @@ export default function PaymentHistoryPage() {
                           title="Select / Deselect All"
                         />
                       </th>
-                      <th>RIDER / CUSTOMER</th>
-                      <th>DATE &amp; TIME</th>
-                      <th>TRANSACTION ID</th>
-                      <th>TYPE</th>
-                      <th>GATEWAY / METHOD</th>
-                      <th>PURPOSE</th>
-                      <th>RENT</th>
-                      <th>DEPOSIT</th>
-                      <th>TOTAL</th>
-                      <th>STATUS</th>
+                      {renderSortHeader('RIDER / CUSTOMER', 'rider_name')}
+                      {renderSortHeader('DATE & TIME', 'created_at')}
+                      {renderSortHeader('TRANSACTION ID', 'tx_id')}
+                      {renderSortHeader('TYPE', 'type')}
+                      {renderSortHeader('GATEWAY / METHOD', 'payment_method')}
+                      {renderSortHeader('PURPOSE', 'purpose')}
+                      {renderSortHeader('RENT', 'rent_amount')}
+                      {renderSortHeader('DEPOSIT', 'deposit_amount')}
+                      {renderSortHeader('TOTAL', 'amount')}
+                      {renderSortHeader('STATUS', 'status')}
                       <th>ACTIONS</th>
                     </tr>
                   </thead>
@@ -763,10 +830,11 @@ export default function PaymentHistoryPage() {
                             {/* Payment Method */}
                             <td>
                               <span className="ph-pm-badge" title={r.payment_method}>
-                                {r.payment_method.includes('ICICI') ? '🟠 ICICI UPI' :
-                                 r.payment_method.includes('PayU') ? 'PayU' :
-                                 r.payment_method.includes('PhonePe') ? '🟣 PhonePe' :
-                                 r.payment_method.includes('Razorpay') ? '🔵 Razorpay' : r.payment_method}
+                                {(r.payment_method || '').includes('Cash') || (r.payment_method || '').includes('Counter') ? '💵 Cash' :
+                                 (r.payment_method || '').includes('ICICI') ? '🟠 ICICI UPI' :
+                                 (r.payment_method || '').includes('PayU') ? 'PayU' :
+                                 (r.payment_method || '').includes('PhonePe') ? '🟣 PhonePe' :
+                                 (r.payment_method || '').includes('Razorpay') ? '🔵 Razorpay' : (r.payment_method || 'Cash')}
                               </span>
                             </td>
 

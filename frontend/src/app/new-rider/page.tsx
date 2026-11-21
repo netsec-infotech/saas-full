@@ -433,14 +433,23 @@ const CSS = `
   border-color: #10B981;
 }
 .nr-inp.is-invalid, .nr-sel.is-invalid, .nr-ph.is-invalid {
-  border-color: #EF4444;
-  background: #FEF2F2;
+  border: 2px solid #EF4444 !important;
+  background: #FEF2F2 !important;
+  box-shadow: 0 0 0 3.5px rgba(239, 68, 68, 0.22) !important;
+  outline: none !important;
+}
+.nr-inp.is-invalid:focus, .nr-sel.is-invalid:focus, .nr-ph.is-invalid:focus-within {
+  border-color: #DC2626 !important;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.3) !important;
 }
 .nr-err-msg {
-  font-size: 11px;
-  color: #EF4444;
-  font-weight: 600;
+  font-size: 11.5px;
+  color: #DC2626;
+  font-weight: 700;
   margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   animation: nrFadeSlideUp 0.2s ease both;
 }
 
@@ -744,6 +753,16 @@ export const INDIAN_STATES_AND_CITIES: Record<string, string[]> = {
 };
 export const ALL_INDIAN_STATES = Object.keys(INDIAN_STATES_AND_CITIES).sort();
 
+/* ── Aadhaar Formatter Helper (XXXX XXXX XXXX) ── */
+export function formatAadhaar(val: string): string {
+  const digits = (val || '').replace(/\D/g, '').slice(0, 12);
+  const parts: string[] = [];
+  for (let i = 0; i < digits.length; i += 4) {
+    parts.push(digits.slice(i, i + 4));
+  }
+  return parts.join(' ');
+}
+
 /* ── Manual form ── */
 function ManualForm({
   formData,
@@ -752,6 +771,8 @@ function ManualForm({
   setMobileRegistered,
   touched,
   setTouched,
+  formSubmitted = false,
+  missingFields = [],
 }: {
   formData: any;
   setFormData: (fn: any) => void;
@@ -759,6 +780,8 @@ function ManualForm({
   setMobileRegistered: (val: any) => void;
   touched: Record<string, boolean>;
   setTouched: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  formSubmitted?: boolean;
+  missingFields?: string[];
 }) {
   const router = useRouter();
   const chevSvg = (
@@ -788,7 +811,7 @@ function ManualForm({
     });
 
     if (field === 'mobile') {
-      const clean = value.replace(/\D/g, '');
+      const clean = value.replace(/\D/g, '').slice(0, 10);
       if (clean.length === 10) {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
         fetch(`${apiUrl}/renters/check-mobile/${clean}`)
@@ -834,9 +857,38 @@ function ManualForm({
 
   const currentAge = getAge(formData.dob);
   const isUnderage = Boolean(formData.dob) && currentAge < 16;
+  const isAadhaar = (formData.idType || 'Aadhaar Card') === 'Aadhaar Card';
+  const cleanIdDigits = (formData.idNumber || '').replace(/\D/g, '');
+  const isIdValid = isAadhaar ? cleanIdDigits.length === 12 : (formData.idNumber || '').trim().length >= 4;
 
   return (
     <div className="nr-form">
+      {formSubmitted && missingFields && missingFields.length > 0 && (
+        <div style={{
+          background: '#FEF2F2',
+          border: '1.5px solid #EF4444',
+          borderRadius: '12px',
+          padding: '14px 18px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          color: '#991B1B',
+          boxShadow: '0 2px 10px rgba(239, 68, 68, 0.12)',
+          animation: 'nrFadeSlideUp 0.25s ease both'
+        }}>
+          <span style={{ fontSize: '20px', flexShrink: 0 }}>⚠️</span>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: '13.5px', marginBottom: '3px' }}>
+              Please complete all required fields highlighted in red below:
+            </div>
+            <div style={{ fontSize: '12px', color: '#B91C1C', fontWeight: 500 }}>
+              Missing or incomplete: {missingFields.join(' • ')}
+            </div>
+          </div>
+        </div>
+      )}
+
       {mobileRegistered && (
         <div style={{
           background: 'linear-gradient(135deg, #FEF2F2 0%, #FEE2E2 100%)',
@@ -932,17 +984,17 @@ function ManualForm({
       <div className="nr-row nr-row-3">
         <div className="nr-fld">
           <label>Mobile Number<span className="req"> *</span></label>
-          <div className={`nr-ph ${(formData.mobile || '').length === 10 && !mobileRegistered ? 'is-valid' : touched.mobile && (formData.mobile || '').length < 10 ? 'is-invalid' : ''}`}>
+          <div className={`nr-ph ${(formData.mobile || '').replace(/\D/g, '').length === 10 && !mobileRegistered ? 'is-valid' : touched.mobile && ((formData.mobile || '').replace(/\D/g, '').length < 10 || mobileRegistered) ? 'is-invalid' : ''}`}>
             <div className="nr-ph-pre"><span style={{ fontSize: 13 }}>🇮🇳</span>+91 {chevSvg}</div>
             <input autoComplete="off" placeholder="Enter 10-digit mobile number"
               maxLength={10}
               value={formData.mobile || ''}
               onBlur={() => markTouched('mobile')}
-              onChange={e => handleChange('mobile', e.target.value.replace(/\D/g, ''))}
+              onChange={e => handleChange('mobile', e.target.value.replace(/\D/g, '').slice(0, 10))}
             />
           </div>
-          {touched.mobile && (formData.mobile || '').length < 10 && (
-            <div className="nr-err-msg">Enter a valid 10-digit mobile number.</div>
+          {touched.mobile && (formData.mobile || '').replace(/\D/g, '').length < 10 && (
+            <div className="nr-err-msg">⚠️ Enter a valid 10-digit mobile number.</div>
           )}
         </div>
         <div className="nr-fld">
@@ -963,7 +1015,7 @@ function ManualForm({
             onChange={e => handleChange('fatherName', e.target.value)}
           />
           {touched.fatherName && (formData.fatherName || '').trim().length < 2 && (
-            <div className="nr-err-msg">Father / guardian name is required.</div>
+            <div className="nr-err-msg">⚠️ Father / guardian name is required.</div>
           )}
         </div>
       </div>
@@ -978,37 +1030,37 @@ function ManualForm({
             onChange={e => handleChange('refName', e.target.value)}
           />
           {touched.refName && (formData.refName || '').trim().length < 2 && (
-            <div className="nr-err-msg">Reference person name is required.</div>
+            <div className="nr-err-msg">⚠️ Reference person name is required.</div>
           )}
         </div>
         <div className="nr-fld">
           <label>Reference Mobile / Number<span className="req"> *</span></label>
-          <div className={`nr-ph ${(formData.refNumber || '').length === 10 ? 'is-valid' : touched.refNumber ? 'is-invalid' : ''}`}>
+          <div className={`nr-ph ${(formData.refNumber || '').replace(/\D/g, '').length === 10 ? 'is-valid' : touched.refNumber ? 'is-invalid' : ''}`}>
             <div className="nr-ph-pre"><span style={{ fontSize: 13 }}>🇮🇳</span>+91 {chevSvg}</div>
             <input autoComplete="off" placeholder="Enter 10-digit reference number"
               maxLength={10}
               value={formData.refNumber || ''}
               onBlur={() => markTouched('refNumber')}
-              onChange={e => handleChange('refNumber', e.target.value.replace(/\D/g, ''))}
+              onChange={e => handleChange('refNumber', e.target.value.replace(/\D/g, '').slice(0, 10))}
             />
           </div>
-          {touched.refNumber && (formData.refNumber || '').length < 10 && (
-            <div className="nr-err-msg">10-digit reference contact number is required.</div>
+          {touched.refNumber && (formData.refNumber || '').replace(/\D/g, '').length < 10 && (
+            <div className="nr-err-msg">⚠️ 10-digit reference contact number is required.</div>
           )}
         </div>
         <div className="nr-fld">
           <label>Emergency Contact <span className="opt">(Optional)</span></label>
-          <div className={`nr-ph ${formData.altMobile && (formData.altMobile || '').length === 10 ? 'is-valid' : touched.altMobile && (formData.altMobile || '').length > 0 ? 'is-invalid' : ''}`}>
+          <div className={`nr-ph ${formData.altMobile && (formData.altMobile || '').replace(/\D/g, '').length === 10 ? 'is-valid' : touched.altMobile && (formData.altMobile || '').length > 0 && (formData.altMobile || '').replace(/\D/g, '').length < 10 ? 'is-invalid' : ''}`}>
             <div className="nr-ph-pre"><span style={{ fontSize: 13 }}>🇮🇳</span>+91 {chevSvg}</div>
             <input autoComplete="off" placeholder="Optional emergency number"
               maxLength={10}
               value={formData.altMobile || ''}
               onBlur={() => markTouched('altMobile')}
-              onChange={e => handleChange('altMobile', e.target.value.replace(/\D/g, ''))}
+              onChange={e => handleChange('altMobile', e.target.value.replace(/\D/g, '').slice(0, 10))}
             />
           </div>
-          {touched.altMobile && (formData.altMobile || '').length > 0 && (formData.altMobile || '').length < 10 && (
-            <div className="nr-err-msg">Please enter a valid 10-digit number or leave empty.</div>
+          {touched.altMobile && (formData.altMobile || '').length > 0 && (formData.altMobile || '').replace(/\D/g, '').length < 10 && (
+            <div className="nr-err-msg">⚠️ Please enter a valid 10-digit number or leave empty.</div>
           )}
         </div>
       </div>
@@ -1024,7 +1076,7 @@ function ManualForm({
             onChange={e => handleChange('address1', e.target.value)}
           />
           {touched.address1 && (formData.address1 || '').trim().length < 3 && (
-            <div className="nr-err-msg">Present address line 1 is required.</div>
+            <div className="nr-err-msg">⚠️ Present address line 1 is required.</div>
           )}
         </div>
         <div className="nr-fld">
@@ -1052,6 +1104,9 @@ function ManualForm({
               <option key={c} value={c} />
             ))}
           </datalist>
+          {touched.city && (formData.city || '').trim().length < 2 && (
+            <div className="nr-err-msg">⚠️ City is required.</div>
+          )}
         </div>
         <div className="nr-fld">
           <label>State<span className="req"> *</span></label>
@@ -1061,10 +1116,6 @@ function ManualForm({
             onBlur={() => markTouched('state')}
             onChange={e => {
               handleChange('state', e.target.value);
-              // If city doesn't belong to new state, reset city
-              if (formData.city && !INDIAN_STATES_AND_CITIES[e.target.value]?.includes(formData.city)) {
-                // leave as is or suggest first city
-              }
             }}
           >
             <option value="">Select Indian State / UT</option>
@@ -1072,18 +1123,21 @@ function ManualForm({
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+          {touched.state && !formData.state && (
+            <div className="nr-err-msg">⚠️ State is required.</div>
+          )}
         </div>
         <div className="nr-fld">
           <label>Pincode<span className="req"> *</span></label>
-          <input autoComplete="off" className={`nr-inp ${(formData.pincode || '').length === 6 ? 'is-valid' : touched.pincode ? 'is-invalid' : ''}`}
+          <input autoComplete="off" className={`nr-inp ${(formData.pincode || '').replace(/\D/g, '').length === 6 ? 'is-valid' : touched.pincode ? 'is-invalid' : ''}`}
             placeholder="Enter 6 digit pincode"
             maxLength={6}
             value={formData.pincode || ''}
             onBlur={() => markTouched('pincode')}
-            onChange={e => handleChange('pincode', e.target.value.replace(/\D/g, ''))}
+            onChange={e => handleChange('pincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
           />
-          {touched.pincode && (formData.pincode || '').length < 6 && (
-            <div className="nr-err-msg">6-digit pincode is required.</div>
+          {touched.pincode && (formData.pincode || '').replace(/\D/g, '').length < 6 && (
+            <div className="nr-err-msg">⚠️ 6-digit pincode is required.</div>
           )}
         </div>
       </div>
@@ -1103,12 +1157,17 @@ function ManualForm({
       <div className="nr-row nr-row-2">
         <div className="nr-fld">
           <label>Address Line 1<span className="req"> *</span></label>
-          <input autoComplete="off" className="nr-inp"
+          <input autoComplete="off" 
+            className={`nr-inp ${(sameAsPresent ? (formData.address1 || '') : (formData.permAddress1 || '')).trim().length >= 3 ? 'is-valid' : (!sameAsPresent && touched.permAddress1) ? 'is-invalid' : ''}`}
             placeholder="Permanent House / Flat, Street"
             value={sameAsPresent ? (formData.address1 || '') : (formData.permAddress1 || '')}
             disabled={sameAsPresent}
+            onBlur={() => markTouched('permAddress1')}
             onChange={e => handleChange('permAddress1', e.target.value)}
           />
+          {!sameAsPresent && touched.permAddress1 && (formData.permAddress1 || '').trim().length < 3 && (
+            <div className="nr-err-msg">⚠️ Permanent address line 1 is required.</div>
+          )}
         </div>
         <div className="nr-fld">
           <label>Address Line 2<span className="opt">(Optional)</span></label>
@@ -1125,10 +1184,11 @@ function ManualForm({
           <label>City<span className="req"> *</span></label>
           <input autoComplete="off" 
             list="perm-cities-list"
-            className="nr-inp"
+            className={`nr-inp ${(sameAsPresent ? (formData.city || '') : (formData.permCity || '')).trim().length >= 2 ? 'is-valid' : (!sameAsPresent && touched.permCity) ? 'is-invalid' : ''}`}
             placeholder="Select or enter permanent city"
             value={sameAsPresent ? (formData.city || '') : (formData.permCity || '')}
             disabled={sameAsPresent}
+            onBlur={() => markTouched('permCity')}
             onChange={e => handleChange('permCity', e.target.value)}
           />
           <datalist id="perm-cities-list">
@@ -1136,13 +1196,17 @@ function ManualForm({
               <option key={c} value={c} />
             ))}
           </datalist>
+          {!sameAsPresent && touched.permCity && (formData.permCity || '').trim().length < 2 && (
+            <div className="nr-err-msg">⚠️ Permanent city is required.</div>
+          )}
         </div>
         <div className="nr-fld">
           <label>State<span className="req"> *</span></label>
           <select
-            className="nr-sel"
+            className={`nr-sel ${(sameAsPresent ? formData.state : formData.permState) ? 'is-valid' : (!sameAsPresent && touched.permState) ? 'is-invalid' : ''}`}
             value={sameAsPresent ? (formData.state || '') : (formData.permState || '')}
             disabled={sameAsPresent}
+            onBlur={() => markTouched('permState')}
             onChange={e => handleChange('permState', e.target.value)}
           >
             <option value="">Select Indian State / UT</option>
@@ -1150,16 +1214,24 @@ function ManualForm({
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+          {!sameAsPresent && touched.permState && !formData.permState && (
+            <div className="nr-err-msg">⚠️ Permanent state is required.</div>
+          )}
         </div>
         <div className="nr-fld">
           <label>Pincode<span className="req"> *</span></label>
-          <input autoComplete="off" className="nr-inp"
+          <input autoComplete="off" 
+            className={`nr-inp ${(sameAsPresent ? (formData.pincode || '') : (formData.permPincode || '')).replace(/\D/g, '').length === 6 ? 'is-valid' : (!sameAsPresent && touched.permPincode) ? 'is-invalid' : ''}`}
             placeholder="Enter 6 digit pincode"
             maxLength={6}
             value={sameAsPresent ? (formData.pincode || '') : (formData.permPincode || '')}
             disabled={sameAsPresent}
-            onChange={e => handleChange('permPincode', e.target.value.replace(/\D/g, ''))}
+            onBlur={() => markTouched('permPincode')}
+            onChange={e => handleChange('permPincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
           />
+          {!sameAsPresent && touched.permPincode && (formData.permPincode || '').replace(/\D/g, '').length < 6 && (
+            <div className="nr-err-msg">⚠️ 6-digit permanent pincode is required.</div>
+          )}
         </div>
       </div>
 
@@ -1170,7 +1242,13 @@ function ManualForm({
           <select
             className="nr-sel is-valid"
             value={formData.idType || 'Aadhaar Card'}
-            onChange={e => handleChange('idType', e.target.value)}
+            onChange={e => {
+              const newType = e.target.value;
+              handleChange('idType', newType);
+              if (newType === 'Aadhaar Card' && formData.idNumber) {
+                handleChange('idNumber', formatAadhaar(formData.idNumber));
+              }
+            }}
           >
             <option value="Aadhaar Card">Aadhaar Card</option>
             <option value="Driving License">Driving License</option>
@@ -1180,14 +1258,25 @@ function ManualForm({
         </div>
         <div className="nr-fld">
           <label>Identity Number<span className="req"> *</span></label>
-          <input autoComplete="off" className={`nr-inp ${(formData.idNumber || '').trim().length >= 4 ? 'is-valid' : touched.idNumber ? 'is-invalid' : ''}`}
-            placeholder={formData.idType === 'Aadhaar Card' ? 'Enter 12-digit Aadhaar number' : 'Enter identity number'}
+          <input autoComplete="off" 
+            className={`nr-inp ${isIdValid ? 'is-valid' : touched.idNumber ? 'is-invalid' : ''}`}
+            placeholder={isAadhaar ? 'XXXX XXXX XXXX (12 digits)' : 'Enter identity number'}
+            maxLength={isAadhaar ? 14 : 25}
             value={formData.idNumber || ''}
             onBlur={() => markTouched('idNumber')}
-            onChange={e => handleChange('idNumber', e.target.value)}
+            onChange={e => {
+              const val = e.target.value;
+              if (isAadhaar) {
+                handleChange('idNumber', formatAadhaar(val));
+              } else {
+                handleChange('idNumber', val);
+              }
+            }}
           />
-          {touched.idNumber && (formData.idNumber || '').trim().length < 4 && (
-            <div className="nr-err-msg">Identity document number is required.</div>
+          {touched.idNumber && !isIdValid && (
+            <div className="nr-err-msg">
+              {isAadhaar ? '⚠️ Enter a valid 12-digit Aadhaar number (XXXX XXXX XXXX).' : '⚠️ Identity document number is required.'}
+            </div>
           )}
         </div>
       </div>
@@ -1354,6 +1443,7 @@ export default function NewRiderPage() {
   const [activeDraft, setActiveDraft] = useState<any>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState<boolean>(false);
+  const [formSubmitted, setFormSubmitted] = useState<boolean>(false);
 
   // Client-side initialization: load draft if ?draftId=... exists, or resume if ?resume=true, else clean wipe!
   useEffect(() => {
@@ -1483,7 +1573,12 @@ export default function NewRiderPage() {
         (formData.permPincode || '').replace(/\D/g, '').length === 6
       )
     },
-    { label: 'Identity Number', ok: (formData.idNumber || '').trim().length >= 4 },
+    {
+      label: (formData.idType || 'Aadhaar Card') === 'Aadhaar Card' ? '12-digit Aadhaar Number' : 'Identity Number',
+      ok: (formData.idType || 'Aadhaar Card') === 'Aadhaar Card'
+        ? (formData.idNumber || '').replace(/\D/g, '').length === 12
+        : (formData.idNumber || '').trim().length >= 4
+    },
   ];
 
   const passedCount = checks.filter(c => c.ok).length;
@@ -1493,6 +1588,7 @@ export default function NewRiderPage() {
 
   const handleNextStep = () => {
     if (!isStep1Valid) {
+      setFormSubmitted(true);
       setMode('manual');
       setTouched({
         fullName: true,
@@ -1507,8 +1603,24 @@ export default function NewRiderPage() {
         city: true,
         state: true,
         pincode: true,
+        permAddress1: !formData.sameAsPresent,
+        permCity: !formData.sameAsPresent,
+        permState: !formData.sameAsPresent,
+        permPincode: !formData.sameAsPresent,
         idNumber: true,
       });
+
+      // Smooth scroll to the first invalid field and focus it
+      setTimeout(() => {
+        const firstInvalid = document.querySelector('.is-invalid') as HTMLElement | null;
+        if (firstInvalid) {
+          firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const inputToFocus = firstInvalid.tagName === 'INPUT' || firstInvalid.tagName === 'SELECT'
+            ? firstInvalid
+            : (firstInvalid.querySelector('input, select') as HTMLElement | null);
+          if (inputToFocus) inputToFocus.focus();
+        }
+      }, 60);
       return;
     }
 
@@ -1722,6 +1834,8 @@ export default function NewRiderPage() {
                       setMobileRegistered={setMobileRegistered}
                       touched={touched}
                       setTouched={setTouched}
+                      formSubmitted={formSubmitted}
+                      missingFields={missingFields}
                     />
                   )}
                 </div>
@@ -1754,9 +1868,8 @@ export default function NewRiderPage() {
                   <button
                     className="nr-save"
                     type="button"
-                    disabled={!isStep1Valid}
                     onClick={handleNextStep}
-                    title={!isStep1Valid ? `Complete required fields: ${missingFields.join(', ')}` : 'Save & Continue to Rental Details'}
+                    title={!isStep1Valid ? `Click to validate and review required fields (${missingFields.length} pending)` : 'Save & Continue to Rental Details'}
                   >
                     Save &amp; Continue <IArr s={12} />
                   </button>

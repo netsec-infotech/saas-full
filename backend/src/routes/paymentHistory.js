@@ -255,14 +255,18 @@ router.get('/', async (req, res) => {
           COALESCE(mobile, '') AS mobile,
           COALESCE(fare, 0)::numeric AS rent_amount,
           COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(total_payable, (COALESCE(fare, 0) + COALESCE(deposit, 0)), fare)::numeric AS amount,
+          COALESCE(NULLIF(total_payable, 0), (COALESCE(fare, 0) + COALESCE(deposit, 0)), deposit, fare, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           CASE 
             WHEN payment_mode ILIKE '%cash%' THEN 'Cash'
             ELSE COALESCE(payment_mode, 'Cash')
           END AS payment_method,
-          'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')' AS purpose,
+          CASE 
+            WHEN COALESCE(fare, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Ride Booking & Deposit'
+            WHEN COALESCE(fare, 0) > 0 THEN 'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')'
+            ELSE 'Security Deposit'
+          END AS purpose,
           COALESCE(
             NULLIF(pickup_zone, ''),
             NULLIF(drop_zone, ''),
@@ -271,7 +275,8 @@ router.get('/', async (req, res) => {
           ) AS zone,
           created_at
         FROM reservations
-        WHERE payment_status = 'Paid' AND COALESCE(fare, 0) > 0
+        WHERE payment_status = 'Paid' 
+          AND (COALESCE(fare, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_payable, 0) > 0)
           AND (payment_mode IS NULL OR payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
@@ -294,6 +299,45 @@ router.get('/', async (req, res) => {
           AND NOT EXISTS (
             SELECT 1 FROM wallet_transactions wt 
             WHERE wt.transaction_id = reservations.transaction_id
+          )
+
+        UNION ALL
+
+        -- 7. Direct / Cash Renter Registration Payments
+        SELECT
+          'rnt_' || id::text AS id,
+          COALESCE(rent_receipt_no, deposit_receipt_no, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
+          COALESCE(rider_id, id::text) AS reference_id,
+          COALESCE(rider_name, 'Rider') AS rider_name,
+          COALESCE(mobile, '') AS mobile,
+          COALESCE(rent, 0)::numeric AS rent_amount,
+          COALESCE(deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(total_paid, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          'Credit' AS type,
+          'Successful' AS status,
+          'Cash' AS payment_method,
+          CASE 
+            WHEN COALESCE(rent, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Counter Registration & Deposit'
+            WHEN COALESCE(rent, 0) > 0 THEN 'Counter Rental Plan'
+            ELSE 'Counter Security Deposit'
+          END AS purpose,
+          COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
+          created_at
+        FROM renters
+        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_paid, 0) > 0)
+          AND (booking_source = 'Form' OR payment_method ILIKE '%cash%' OR payment_method ILIKE '%counter%')
+          AND NOT EXISTS (
+            SELECT 1 FROM payu_payments pp 
+            WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM icici_payments ip 
+            WHERE ip.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM reservations res
+            WHERE res.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND res.payment_status = 'Paid'
           )
       )
       SELECT * FROM unified_transactions
@@ -362,6 +406,16 @@ router.get('/', async (req, res) => {
 
       if (statusFilter !== 'all' && (rec.status || '').toLowerCase() !== statusFilter) {
         return false;
+      }
+
+      if (req.query.method && req.query.method !== 'all') {
+        const m = req.query.method.toLowerCase();
+        const pm = (rec.payment_method || '').toLowerCase();
+        if (m === 'cash' && !(pm.includes('cash') || pm.includes('counter'))) return false;
+        if (m === 'payu' && !pm.includes('payu')) return false;
+        if (m === 'icici' && !pm.includes('icici')) return false;
+        if (m === 'phonepe' && !pm.includes('phonepe')) return false;
+        if (m === 'wallet' && !pm.includes('wallet')) return false;
       }
 
       if (effectiveZoneFilter && effectiveZoneFilter.toLowerCase() !== 'all' && effectiveZoneFilter.toLowerCase() !== 'all zones') {
@@ -871,14 +925,18 @@ router.get('/export', async (req, res) => {
           COALESCE(mobile, '') AS mobile,
           COALESCE(fare, 0)::numeric AS rent_amount,
           COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(total_payable, (COALESCE(fare, 0) + COALESCE(deposit, 0)), fare)::numeric AS amount,
+          COALESCE(NULLIF(total_payable, 0), (COALESCE(fare, 0) + COALESCE(deposit, 0)), deposit, fare, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           CASE 
             WHEN payment_mode ILIKE '%cash%' THEN 'Cash'
             ELSE COALESCE(payment_mode, 'Cash')
           END AS payment_method,
-          'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')' AS purpose,
+          CASE 
+            WHEN COALESCE(fare, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Ride Booking & Deposit'
+            WHEN COALESCE(fare, 0) > 0 THEN 'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')'
+            ELSE 'Security Deposit'
+          END AS purpose,
           COALESCE(
             NULLIF(pickup_zone, ''),
             NULLIF(drop_zone, ''),
@@ -887,7 +945,8 @@ router.get('/export', async (req, res) => {
           ) AS zone,
           created_at
         FROM reservations
-        WHERE payment_status = 'Paid' AND COALESCE(fare, 0) > 0
+        WHERE payment_status = 'Paid' 
+          AND (COALESCE(fare, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_payable, 0) > 0)
           AND (payment_mode IS NULL OR payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
@@ -910,6 +969,45 @@ router.get('/export', async (req, res) => {
           AND NOT EXISTS (
             SELECT 1 FROM wallet_transactions wt 
             WHERE wt.transaction_id = reservations.transaction_id
+          )
+
+        UNION ALL
+
+        -- 7. Direct / Cash Renter Registration Payments
+        SELECT
+          'rnt_' || id::text AS id,
+          COALESCE(rent_receipt_no, deposit_receipt_no, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
+          COALESCE(rider_id, id::text) AS reference_id,
+          COALESCE(rider_name, 'Rider') AS rider_name,
+          COALESCE(mobile, '') AS mobile,
+          COALESCE(rent, 0)::numeric AS rent_amount,
+          COALESCE(deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(total_paid, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          'Credit' AS type,
+          'Successful' AS status,
+          'Cash' AS payment_method,
+          CASE 
+            WHEN COALESCE(rent, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Counter Registration & Deposit'
+            WHEN COALESCE(rent, 0) > 0 THEN 'Counter Rental Plan'
+            ELSE 'Counter Security Deposit'
+          END AS purpose,
+          COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
+          created_at
+        FROM renters
+        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_paid, 0) > 0)
+          AND (booking_source = 'Form' OR payment_method ILIKE '%cash%' OR payment_method ILIKE '%counter%')
+          AND NOT EXISTS (
+            SELECT 1 FROM payu_payments pp 
+            WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM icici_payments ip 
+            WHERE ip.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM reservations res
+            WHERE res.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND res.payment_status = 'Paid'
           )
       )
       SELECT * FROM unified_transactions ORDER BY created_at DESC;
@@ -937,6 +1035,16 @@ router.get('/export', async (req, res) => {
 
       if (statusFilter !== 'all' && (rec.status || '').toLowerCase() !== statusFilter) {
         return false;
+      }
+
+      if (req.query.method && req.query.method !== 'all') {
+        const m = req.query.method.toLowerCase();
+        const pm = (rec.payment_method || '').toLowerCase();
+        if (m === 'cash' && !(pm.includes('cash') || pm.includes('counter'))) return false;
+        if (m === 'payu' && !pm.includes('payu')) return false;
+        if (m === 'icici' && !pm.includes('icici')) return false;
+        if (m === 'phonepe' && !pm.includes('phonepe')) return false;
+        if (m === 'wallet' && !pm.includes('wallet')) return false;
       }
 
       if (effectiveZoneFilter && effectiveZoneFilter.toLowerCase() !== 'all' && effectiveZoneFilter.toLowerCase() !== 'all zones') {

@@ -1667,6 +1667,63 @@ function ZoneManagerRoleDashboard() {
     }
   };
 
+  // KPI Dropdown Table Sorting State
+  const [kpiSortColumn, setKpiSortColumn] = useState<string>('');
+  const [kpiSortDirection, setKpiSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleKpiSort = (colKey: string) => {
+    if (kpiSortColumn === colKey) {
+      setKpiSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setKpiSortColumn(colKey);
+      setKpiSortDirection('asc');
+    }
+  };
+
+  const renderKpiSortHeader = (label: string, colKey: string) => {
+    const isSorted = kpiSortColumn === colKey;
+    return (
+      <th
+        onClick={() => handleKpiSort(colKey)}
+        style={{
+          cursor: 'pointer',
+          userSelect: 'none',
+          whiteSpace: 'nowrap',
+          transition: 'background-color 0.15s ease'
+        }}
+        title={`Click to sort by ${label} (${isSorted && kpiSortDirection === 'asc' ? 'descending' : 'ascending'})`}
+      >
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <span>{label}</span>
+          <span style={{ fontSize: 10, color: isSorted ? '#4F46E5' : '#94A3B8', fontWeight: 800 }}>
+            {isSorted ? (kpiSortDirection === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        </div>
+      </th>
+    );
+  };
+
+  const sortKpiList = (list: any[]) => {
+    if (!kpiSortColumn) return list;
+    return [...list].sort((a: any, b: any) => {
+      let aVal = a[kpiSortColumn];
+      let bVal = b[kpiSortColumn];
+      if (['created_at', 'start_date', 'return_date'].includes(kpiSortColumn)) {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      } else if (['amount', 'rent', 'deposit', 'deposit_amount', 'fare', 'amount_due'].includes(kpiSortColumn)) {
+        aVal = parseFloat(aVal || 0);
+        bVal = parseFloat(bVal || 0);
+      } else {
+        aVal = (aVal || '').toString().toLowerCase();
+        bVal = (bVal || '').toString().toLowerCase();
+      }
+      if (aVal < bVal) return kpiSortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return kpiSortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
     // Fetch Stats from Backend API
     const fetchZoneStats = async (zoneName: string, start?: string, end?: string) => {
     try {
@@ -2053,14 +2110,14 @@ function ZoneManagerRoleDashboard() {
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
-                            <th>Rider / Customer</th>
-                            <th>Mobile</th>
-                            <th>Vehicle Number</th>
-                            <th>Battery Assigned</th>
-                            <th>Package / Pass</th>
-                            <th>Start Date &amp; Time</th>
-                            <th>Return Schedule</th>
-                            <th>Status</th>
+                            {renderKpiSortHeader('Rider / Customer', 'rider_name')}
+                            {renderKpiSortHeader('Mobile', 'mobile')}
+                            {renderKpiSortHeader('Vehicle Number', 'vehicle_number')}
+                            {renderKpiSortHeader('Battery Assigned', 'battery_id')}
+                            {renderKpiSortHeader('Package / Pass', 'package_name')}
+                            {renderKpiSortHeader('Start Date & Time', 'start_date')}
+                            {renderKpiSortHeader('Return Schedule', 'return_date')}
+                            {renderKpiSortHeader('Status', 'status')}
                             <th>Action</th>
                           </tr>
                         </thead>
@@ -2068,7 +2125,7 @@ function ZoneManagerRoleDashboard() {
                           {list.length === 0 ? (
                             <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No ride records found matching filter.</td></tr>
                           ) : (
-                            list.map((r: any, idx: number) => (
+                            sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
                                 <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
                                 <td style={{ color: '#475569', fontSize: '12px' }}>{r.mobile}</td>
@@ -2120,16 +2177,16 @@ function ZoneManagerRoleDashboard() {
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
-                            <th>Rider ID</th>
-                            <th>Rider Name</th>
-                            <th>Mobile</th>
-                            <th>Vehicle Assigned</th>
-                            <th>Battery</th>
-                            <th>Package Plan</th>
-                            <th>KYC Status</th>
-                            <th>Ride Status</th>
-                            <th>Rent / Fare</th>
-                            <th>Deposit</th>
+                            {renderKpiSortHeader('Rider ID', 'rider_id')}
+                            {renderKpiSortHeader('Rider Name', 'rider_name')}
+                            {renderKpiSortHeader('Mobile', 'mobile')}
+                            {renderKpiSortHeader('Vehicle Assigned', 'vehicle_id')}
+                            {renderKpiSortHeader('Battery', 'battery_id')}
+                            {renderKpiSortHeader('Package Plan', 'package_name')}
+                            {renderKpiSortHeader('KYC Status', 'kyc_status')}
+                            {renderKpiSortHeader('Ride Status', 'status')}
+                            {renderKpiSortHeader('Rent / Fare', 'rent')}
+                            {renderKpiSortHeader('Deposit', 'deposit')}
                             <th>Actions</th>
                           </tr>
                         </thead>
@@ -2137,7 +2194,7 @@ function ZoneManagerRoleDashboard() {
                           {list.length === 0 ? (
                             <tr><td colSpan={11} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No riders found matching filter.</td></tr>
                           ) : (
-                            list.map((r: any, idx: number) => (
+                            sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
                                 <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#2A195C', fontSize: '11.5px' }}>{r.rider_id}</td>
                                 <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
@@ -2191,23 +2248,23 @@ function ZoneManagerRoleDashboard() {
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
-                            <th>Booking / Rental ID</th>
-                            <th>Customer Name</th>
-                            <th>Mobile</th>
-                            <th>Vehicle Number</th>
-                            <th>Plan / Package</th>
-                            <th>Fare</th>
-                            <th>Deposit</th>
-                            <th>Payment</th>
-                            <th>Status</th>
-                            <th>Booking Date</th>
+                            {renderKpiSortHeader('Booking / Rental ID', 'rental_id')}
+                            {renderKpiSortHeader('Customer Name', 'customer_name')}
+                            {renderKpiSortHeader('Mobile', 'mobile')}
+                            {renderKpiSortHeader('Vehicle Number', 'vehicle_number')}
+                            {renderKpiSortHeader('Plan / Package', 'package_plan')}
+                            {renderKpiSortHeader('Fare', 'fare')}
+                            {renderKpiSortHeader('Deposit', 'deposit')}
+                            {renderKpiSortHeader('Payment', 'payment_status')}
+                            {renderKpiSortHeader('Status', 'status')}
+                            {renderKpiSortHeader('Booking Date', 'created_at')}
                           </tr>
                         </thead>
                         <tbody>
                           {list.length === 0 ? (
                             <tr><td colSpan={10} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No rentals found matching filter.</td></tr>
                           ) : (
-                            list.map((r: any, idx: number) => (
+                            sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
                                 <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#10B981' }}>{r.rental_id}</td>
                                 <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.customer_name}</td>
@@ -2259,14 +2316,14 @@ function ZoneManagerRoleDashboard() {
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
-                            <th>Transaction ID</th>
-                            <th>Customer / Rider</th>
-                            <th>Mobile</th>
-                            <th>Payment Gateway</th>
-                            <th>Purpose</th>
-                            <th>Amount Paid</th>
-                            <th>Status</th>
-                            <th>Transaction Date</th>
+                            {renderKpiSortHeader('Transaction ID', 'tx_id')}
+                            {renderKpiSortHeader('Customer / Rider', 'rider_name')}
+                            {renderKpiSortHeader('Mobile', 'mobile')}
+                            {renderKpiSortHeader('Payment Gateway', 'payment_method')}
+                            {renderKpiSortHeader('Purpose', 'purpose')}
+                            {renderKpiSortHeader('Amount Paid', 'amount')}
+                            {renderKpiSortHeader('Status', 'status')}
+                            {renderKpiSortHeader('Transaction Date', 'created_at')}
                             <th>Actions</th>
                           </tr>
                         </thead>
@@ -2274,7 +2331,7 @@ function ZoneManagerRoleDashboard() {
                           {list.length === 0 ? (
                             <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No payment records found for this zone.</td></tr>
                           ) : (
-                            list.map((r: any, idx: number) => (
+                            sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
                                 <td>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2342,14 +2399,14 @@ function ZoneManagerRoleDashboard() {
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
-                            <th>Deposit Record ID</th>
-                            <th>Rider / Customer</th>
-                            <th>Mobile</th>
-                            <th>Vehicle Assigned</th>
-                            <th>Deposit Amount</th>
-                            <th>Deposit Status</th>
-                            <th>Source</th>
-                            <th>Date Recorded</th>
+                            {renderKpiSortHeader('Deposit Record ID', 'record_id')}
+                            {renderKpiSortHeader('Rider / Customer', 'rider_name')}
+                            {renderKpiSortHeader('Mobile', 'mobile')}
+                            {renderKpiSortHeader('Vehicle Assigned', 'vehicle_number')}
+                            {renderKpiSortHeader('Deposit Amount', 'deposit_amount')}
+                            {renderKpiSortHeader('Deposit Status', 'deposit_status')}
+                            {renderKpiSortHeader('Source', 'source')}
+                            {renderKpiSortHeader('Date Recorded', 'created_at')}
                             <th>Action</th>
                           </tr>
                         </thead>
@@ -2357,7 +2414,7 @@ function ZoneManagerRoleDashboard() {
                           {list.length === 0 ? (
                             <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No deposit records found for this zone.</td></tr>
                           ) : (
-                            list.map((r: any, idx: number) => (
+                            sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
                                 <td style={{ fontWeight: 800, fontFamily: 'Outfit', color: '#059669' }}>{r.record_id}</td>
                                 <td style={{ fontWeight: 750, color: '#0F172A' }}>{r.rider_name}</td>
