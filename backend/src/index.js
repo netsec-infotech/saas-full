@@ -71,6 +71,11 @@ app.use(['/uploads/:file', '/api/uploads/:file'], (req, res, next) => {
   if (resolved) {
     return res.sendFile(resolved);
   }
+  // If running locally and asset was uploaded to live server, redirect to live asset
+  const host = req.headers.host || '';
+  if (host.includes('localhost') || host.includes('127.0.0.1') || host.includes('192.168.')) {
+    return res.redirect(`https://evegah.cloud/api/uploads/${encodeURIComponent(req.params.file)}`);
+  }
   next();
 });
 

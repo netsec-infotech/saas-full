@@ -5,7 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import TopBar from '@/components/TopBar';
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=Playfair+Display:wght@700&family=Space+Mono:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Inter:wght@400;600;700;800&family=Montserrat:wght@500;700;800&family=Outfit:wght@500;700;800&family=Playfair+Display:wght@700&family=Plus+Jakarta+Sans:wght@600;700;800;900&family=Poppins:wght@500;700;800&family=Roboto:wght@500;700;900&family=Space+Mono:wght@700&display=swap');
 
 .ev-shell { display: flex; min-height: 100vh; background: #F3F4F9; font-family: 'Inter', sans-serif; }
 .ev-main { margin-left: var(--ev-sidebar-width, 240px); display: flex; flex-direction: column; min-height: 100vh; width: calc(100% - var(--ev-sidebar-width, 240px)); }
@@ -189,9 +189,13 @@ function normalizeImageUrl(url?: string): string {
   if (!url) return '';
   const s = String(url).trim();
   if (!s) return '';
+  if (s.startsWith('data:') || s.startsWith('blob:')) return s;
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (s.startsWith('/api/uploads/')) return s;
   if (s.startsWith('/uploads/')) return `/api${s}`;
   if (s.includes('evegah.cloud/uploads/')) return s.replace('evegah.cloud/uploads/', 'evegah.cloud/api/uploads/');
-  return s;
+  if (s.startsWith('/')) return s;
+  return `/api/uploads/${s}`;
 }
 
 const compressImageForUpload = (file: File, isCutout: boolean): Promise<string> => {
@@ -512,13 +516,46 @@ export default function WhiteLabelManagement() {
     setIsSavingSliders(true);
     setSliderSaveMsg('');
     try {
+      const prepareSlide = (s: any, idx: number) => {
+        const title = s.title !== undefined ? String(s.title) : '';
+        const lines = Array.isArray(s.lines) && s.lines.length > 0 ? s.lines : (title ? title.split('\n') : []);
+        const subtitle = s.subtitle !== undefined ? String(s.subtitle) : (s.sub !== undefined ? String(s.sub) : '');
+        const tag = s.tag !== undefined ? String(s.tag) : (s.badgeText !== undefined ? String(s.badgeText) : `Slider ${idx + 1}`);
+
+        return {
+          ...s,
+          title,
+          lines,
+          subtitle,
+          sub: subtitle,
+          tag,
+          badgeText: tag,
+          showCutout: s.showCutout !== false && Boolean(s.front),
+          bgOpacity: s.bgOpacity !== undefined ? Number(s.bgOpacity) : 100,
+          bgOffsetX: s.bgOffsetX !== undefined ? Number(s.bgOffsetX) : 0,
+          bgOffsetY: s.bgOffsetY !== undefined ? Number(s.bgOffsetY) : 0,
+          bgScale: s.bgScale !== undefined ? Number(s.bgScale) : 1.0,
+          titleOpacity: s.titleOpacity !== undefined ? Number(s.titleOpacity) : 100,
+          subOpacity: s.subOpacity !== undefined ? Number(s.subOpacity) : 100,
+          textOffsetX: s.textOffsetX !== undefined ? Number(s.textOffsetX) : 14,
+          textOffsetY: s.textOffsetY !== undefined ? Number(s.textOffsetY) : 18,
+          textWidthPercent: s.textWidthPercent !== undefined ? Number(s.textWidthPercent) : 94,
+          fontStyle: s.fontStyle || 'signature',
+          fontFamily: s.fontFamily || s.fontStyle || 'signature',
+          isCustom: true
+        };
+      };
+
+      const preparedHome = homeSliders.map((s, i) => prepareSlide(s, i));
+      const preparedRent = rentSliders.map((s, i) => prepareSlide(s, i));
+
       const res = await fetch('/api/settings/app_slider', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           value: {
-            home_sliders: homeSliders,
-            rent_sliders: rentSliders
+            home_sliders: preparedHome,
+            rent_sliders: preparedRent
           }
         })
       });
@@ -1351,15 +1388,27 @@ export default function WhiteLabelManagement() {
   const showCta = activeSlide.showCta !== false && Boolean(currentCta.trim());
   const hasTextInPreview = showBadge || showTitle || showSubtitle || showCta;
 
-  const fontStyle = activeSlide.fontStyle || 'signature';
+  const fontStyle = (activeSlide.fontFamily || activeSlide.fontStyle || 'signature').toLowerCase().trim();
   let fontFamStyle: React.CSSProperties = { fontFamily: "'Caveat', cursive", fontWeight: 700 };
-  if (fontStyle === 'sans') {
+  if (fontStyle.includes('outfit')) {
+    fontFamStyle = { fontFamily: "'Outfit', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('jakarta')) {
     fontFamStyle = { fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700 };
-  } else if (fontStyle === 'bold') {
+  } else if (fontStyle.includes('inter')) {
+    fontFamStyle = { fontFamily: "'Inter', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('poppins')) {
+    fontFamStyle = { fontFamily: "'Poppins', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('montserrat')) {
+    fontFamStyle = { fontFamily: "'Montserrat', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('roboto')) {
+    fontFamStyle = { fontFamily: "'Roboto', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('sans')) {
+    fontFamStyle = { fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 700 };
+  } else if (fontStyle.includes('bold')) {
     fontFamStyle = { fontFamily: "'Plus Jakarta Sans', sans-serif", fontWeight: 900, textTransform: 'uppercase', letterSpacing: '-0.5px' };
-  } else if (fontStyle === 'serif') {
+  } else if (fontStyle.includes('serif') || fontStyle.includes('playfair')) {
     fontFamStyle = { fontFamily: "'Playfair Display', serif", fontWeight: 700 };
-  } else if (fontStyle === 'mono') {
+  } else if (fontStyle.includes('mono') || fontStyle.includes('space')) {
     fontFamStyle = { fontFamily: "'Space Mono', monospace", fontWeight: 700 };
   }
 
@@ -2140,36 +2189,53 @@ export default function WhiteLabelManagement() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>Typography & Font Style</span>
 
-                {/* Font Selector Cards */}
+                {/* Full Font Family Selector Cards */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <label className="wl-lbl">Headline Font Style</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="wl-lbl">Headline & Body Font Family</label>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#6366F1' }}>
+                      Selected: {(activeSlide.fontFamily || activeSlide.fontStyle || 'signature').toUpperCase()}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
                     {[
-                      { key: 'signature', label: 'Signature Script', preview: 'Signature Script', style: { fontFamily: "'Caveat', cursive", fontSize: '18px' } },
-                      { key: 'sans', label: 'Modern Sans', preview: 'Modern Sans', style: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '13px', fontWeight: 700 } },
-                      { key: 'bold', label: 'Bold Display', preview: 'BOLD DISPLAY', style: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '12.5px', fontWeight: 900 } },
-                      { key: 'serif', label: 'Elegant Serif', preview: 'Elegant Serif', style: { fontFamily: "'Playfair Display', serif", fontSize: '14px', fontWeight: 700 } },
-                      { key: 'mono', label: 'Monospace', preview: 'Monospace', style: { fontFamily: "'Space Mono', monospace", fontSize: '12px' } }
-                    ].map(f => (
-                      <div
-                        key={f.key}
-                        onClick={() => handleUpdateSlide(selectedSlideIdx, 'fontStyle', f.key)}
-                        style={{
-                          padding: '12px 10px',
-                          border: '1.5px solid',
-                          borderColor: (activeSlide.fontStyle || 'signature') === f.key ? '#6366F1' : '#E2E8F0',
-                          borderRadius: '10px',
-                          background: (activeSlide.fontStyle || 'signature') === f.key ? '#F5F3FF' : '#FFFFFF',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '4px'
-                        }}
-                      >
-                        <span style={{ fontSize: '10.5px', color: '#64748B', fontWeight: 700 }}>{f.label}</span>
-                        <span style={{ ...f.style, color: '#1E293B', lineHeight: 1.2 }}>{f.preview}</span>
-                      </div>
-                    ))}
+                      { key: 'outfit', label: 'Outfit', preview: 'Clean Sans', style: { fontFamily: "'Outfit', sans-serif", fontSize: '13px', fontWeight: 700 } },
+                      { key: 'jakarta', label: 'Plus Jakarta', preview: 'Modern UI', style: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '12.5px', fontWeight: 700 } },
+                      { key: 'inter', label: 'Inter', preview: 'Crisp Neutral', style: { fontFamily: "'Inter', sans-serif", fontSize: '12.5px', fontWeight: 600 } },
+                      { key: 'poppins', label: 'Poppins', preview: 'Rounded Geometric', style: { fontFamily: "'Poppins', sans-serif", fontSize: '12px', fontWeight: 600 } },
+                      { key: 'montserrat', label: 'Montserrat', preview: 'Urban Modern', style: { fontFamily: "'Montserrat', sans-serif", fontSize: '12px', fontWeight: 700 } },
+                      { key: 'roboto', label: 'Roboto', preview: 'Google Clean', style: { fontFamily: "'Roboto', sans-serif", fontSize: '12.5px', fontWeight: 600 } },
+                      { key: 'signature', label: 'Signature', preview: 'Script Handwriting', style: { fontFamily: "'Caveat', cursive", fontSize: '16px', fontWeight: 700 } },
+                      { key: 'serif', label: 'Playfair Serif', preview: 'Luxury Serif', style: { fontFamily: "'Playfair Display', serif", fontSize: '13px', fontWeight: 700 } },
+                      { key: 'mono', label: 'Monospace', preview: 'Tech Mono', style: { fontFamily: "'Space Mono', monospace", fontSize: '11px', fontWeight: 700 } },
+                      { key: 'bold', label: 'Heavy Display', preview: 'EXTRA BOLD', style: { fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '12px', fontWeight: 900 } }
+                    ].map(f => {
+                      const isSelected = (activeSlide.fontFamily || activeSlide.fontStyle || 'signature') === f.key;
+                      return (
+                        <div
+                          key={f.key}
+                          onClick={() => {
+                            handleUpdateSlide(selectedSlideIdx, 'fontFamily', f.key);
+                            handleUpdateSlide(selectedSlideIdx, 'fontStyle', f.key);
+                          }}
+                          style={{
+                            padding: '10px 8px',
+                            border: '1.5px solid',
+                            borderColor: isSelected ? '#6366F1' : '#E2E8F0',
+                            borderRadius: '10px',
+                            background: isSelected ? '#F5F3FF' : '#FFFFFF',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '3px',
+                            textAlign: 'center'
+                          }}
+                        >
+                          <span style={{ fontSize: '10px', color: isSelected ? '#6366F1' : '#64748B', fontWeight: 800 }}>{f.label}</span>
+                          <span style={{ ...f.style, color: isSelected ? '#4338CA' : '#1E293B', lineHeight: 1.2 }}>{f.preview}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -2243,6 +2309,39 @@ export default function WhiteLabelManagement() {
                         onChange={e => handleUpdateSlide(selectedSlideIdx, 'subColor', e.target.value)}
                       />
                     </div>
+                  </div>
+                </div>
+
+                {/* Font Opacity Controls */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: '#F8FAFC', padding: '12px 14px', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Title Font Opacity</label>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#6366F1' }}>{activeSlide.titleOpacity !== undefined ? activeSlide.titleOpacity : 100}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      value={activeSlide.titleOpacity !== undefined ? activeSlide.titleOpacity : 100}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'titleOpacity', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
+                  </div>
+
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Subtitle Font Opacity</label>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#6366F1' }}>{activeSlide.subOpacity !== undefined ? activeSlide.subOpacity : 100}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      value={activeSlide.subOpacity !== undefined ? activeSlide.subOpacity : 100}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'subOpacity', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
                   </div>
                 </div>
 
@@ -2360,6 +2459,77 @@ export default function WhiteLabelManagement() {
                   </div>
                 </div>
 
+                {/* Background Opacity & Scale */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Background Image Opacity</label>
+                      <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#6366F1' }}>{activeSlide.bgOpacity !== undefined ? activeSlide.bgOpacity : 100}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={activeSlide.bgOpacity !== undefined ? activeSlide.bgOpacity : 100}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'bgOpacity', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>Fades background photo without affecting text or cutout.</span>
+                  </div>
+
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Background Zoom / Scale</label>
+                      <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#6366F1' }}>{activeSlide.bgScale || 1.0}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.8"
+                      max="2.2"
+                      step="0.05"
+                      value={activeSlide.bgScale !== undefined ? activeSlide.bgScale : 1.0}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'bgScale', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>Zoom in or out to fit the scenic focal point.</span>
+                  </div>
+                </div>
+
+                {/* Background Movement X & Y */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', background: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Background Movement X (Horizontal)</label>
+                      <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#6366F1' }}>{activeSlide.bgOffsetX ?? 0}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-120"
+                      max="120"
+                      value={activeSlide.bgOffsetX ?? 0}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'bgOffsetX', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>Shift photo left or right.</span>
+                  </div>
+
+                  <div className="wl-form-group">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label className="wl-lbl">Background Movement Y (Vertical)</label>
+                      <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#6366F1' }}>{activeSlide.bgOffsetY ?? 0}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-120"
+                      max="120"
+                      value={activeSlide.bgOffsetY ?? 0}
+                      onChange={e => handleUpdateSlide(selectedSlideIdx, 'bgOffsetY', Number(e.target.value))}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>Shift photo up or down.</span>
+                  </div>
+                </div>
+
                 {/* Overlay Opacity Slider & Color */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: '16px', background: '#F8FAFC', padding: '14px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
                   <div className="wl-form-group">
@@ -2405,6 +2575,72 @@ export default function WhiteLabelManagement() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>Front Cutout Asset & Dimensions</span>
 
+                {/* Cutout Enable / Remove Toggle */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 14px',
+                  background: (activeSlide.showCutout !== false && activeSlide.front) ? '#EEF2FF' : '#F8FAFC',
+                  border: `1.5px solid ${(activeSlide.showCutout !== false && activeSlide.front) ? '#6366F1' : '#E2E8F0'}`,
+                  borderRadius: '12px',
+                  transition: 'all 0.15s ease'
+                }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>Enable Front Cutout</span>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        padding: '2px 7px',
+                        borderRadius: '6px',
+                        background: (activeSlide.showCutout !== false && activeSlide.front) ? '#DCFCE7' : '#F1F5F9',
+                        color: (activeSlide.showCutout !== false && activeSlide.front) ? '#166534' : '#64748B'
+                      }}>
+                        {(activeSlide.showCutout !== false && activeSlide.front) ? 'Active' : 'No Cutout (Removed)'}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '11px', color: '#64748B' }}>
+                      Turn off or remove cutout to show only clean scenic background banner without any scooter overlay.
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {activeSlide.front ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleUpdateSlide(selectedSlideIdx, 'front', '');
+                          handleUpdateSlide(selectedSlideIdx, 'showCutout', false);
+                        }}
+                        style={{
+                          fontSize: '11.5px',
+                          color: '#EF4444',
+                          fontWeight: 700,
+                          background: '#FEE2E2',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer',
+                          padding: '6px 12px'
+                        }}
+                      >
+                        Remove Cutout
+                      </button>
+                    ) : null}
+                    <input
+                      type="checkbox"
+                      checked={activeSlide.showCutout !== false && Boolean(activeSlide.front)}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        handleUpdateSlide(selectedSlideIdx, 'showCutout', checked);
+                        if (!checked) {
+                          handleUpdateSlide(selectedSlideIdx, 'front', '');
+                        }
+                      }}
+                      style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#4F46E5' }}
+                    />
+                  </div>
+                </div>
+
                 {/* Cutout Asset */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <label className="wl-lbl">Front Asset Cutout (Scooter / Mascot / Rider PNG)</label>
@@ -2418,8 +2654,8 @@ export default function WhiteLabelManagement() {
                         onError={(e: any) => { e.target.style.display = 'none'; }}
                       />
                     ) : (
-                      <div style={{ width: '68px', height: '46px', borderRadius: '6px', background: '#F1F5F9', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9.5px', color: '#64748B', fontWeight: 600 }}>
-                        Default EV
+                      <div style={{ width: '68px', height: '46px', borderRadius: '6px', background: '#F8FAFC', border: '1px dashed #CBD5E1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9.5px', color: '#94A3B8', fontWeight: 600 }}>
+                        No Cutout
                       </div>
                     )}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -2435,13 +2671,19 @@ export default function WhiteLabelManagement() {
                             type="file"
                             accept="image/*"
                             style={{ display: 'none' }}
-                            onChange={e => handleUploadSliderFile(selectedSlideIdx, 'front', e)}
+                            onChange={e => {
+                              handleUploadSliderFile(selectedSlideIdx, 'front', e);
+                              handleUpdateSlide(selectedSlideIdx, 'showCutout', true);
+                            }}
                           />
                         </label>
                         {activeSlide.front ? (
                           <button
                             type="button"
-                            onClick={() => handleRemoveSliderFile(selectedSlideIdx, 'front')}
+                            onClick={() => {
+                              handleRemoveSliderFile(selectedSlideIdx, 'front');
+                              handleUpdateSlide(selectedSlideIdx, 'showCutout', false);
+                            }}
                             style={{ fontSize: '11px', color: '#EF4444', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', padding: '1px 6px' }}
                             title="Clear cutout"
                           >
@@ -2455,7 +2697,10 @@ export default function WhiteLabelManagement() {
                         style={{ fontSize: '11.5px', padding: '6px 10px' }}
                         placeholder="or paste image URL"
                         value={activeSlide.front || ''}
-                        onChange={e => handleUpdateSlide(selectedSlideIdx, 'front', e.target.value)}
+                        onChange={e => {
+                          handleUpdateSlide(selectedSlideIdx, 'front', e.target.value);
+                          if (e.target.value) handleUpdateSlide(selectedSlideIdx, 'showCutout', true);
+                        }}
                       />
                     </div>
                   </div>
@@ -2683,7 +2928,17 @@ export default function WhiteLabelManagement() {
                         src={normalizeImageUrl(activeSlide.bg)}
                         alt="Slide BG"
                         className="phone-slide-bg"
-                        style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0 }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          opacity: (activeSlide.bgOpacity !== undefined ? Number(activeSlide.bgOpacity) : 100) / 100,
+                          transform: `translate(${activeSlide.bgOffsetX || 0}px, ${activeSlide.bgOffsetY || 0}px) scale(${activeSlide.bgScale || 1.0})`,
+                          transformOrigin: 'center center'
+                        }}
                       />
                     ) : (
                       <div
@@ -2694,6 +2949,9 @@ export default function WhiteLabelManagement() {
                           position: 'absolute',
                           top: 0,
                           left: 0,
+                          opacity: (activeSlide.bgOpacity !== undefined ? Number(activeSlide.bgOpacity) : 100) / 100,
+                          transform: `translate(${activeSlide.bgOffsetX || 0}px, ${activeSlide.bgOffsetY || 0}px) scale(${activeSlide.bgScale || 1.0})`,
+                          transformOrigin: 'center center',
                           background: sliderScreen === 'rent'
                             ? 'radial-gradient(circle at 80% 20%, #EDE9FE 0%, #E0E7FF 40%, #F1F5F9 100%)'
                             : 'radial-gradient(circle at 80% 20%, #CCFBF1 0%, #E0E7FF 40%, #F8FAFC 100%)'
@@ -2716,8 +2974,8 @@ export default function WhiteLabelManagement() {
                       }}
                     />
 
-                    {/* Front Cutout Asset */}
-                    {activeSlide.front ? (
+                    {/* Front Cutout Asset: ONLY render if cutout is enabled and uploaded (Default cutout removed) */}
+                    {activeSlide.showCutout !== false && activeSlide.front ? (
                       <img
                         src={normalizeImageUrl(activeSlide.front)}
                         alt="Cutout"
@@ -2731,34 +2989,7 @@ export default function WhiteLabelManagement() {
                           zIndex: activeSlide.depthEffect ? 6 : 3
                         }}
                       />
-                    ) : (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          right: `${activeSlide.cutoutRight ?? 0}px`,
-                          bottom: `${activeSlide.cutoutBottom ?? 4}px`,
-                          width: `${180 * (activeSlide.cutoutScale || 1.0)}px`,
-                          height: `${160 * (activeSlide.cutoutScale || 1.0)}px`,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          zIndex: activeSlide.depthEffect ? 6 : 3
-                        }}
-                      >
-                        <svg width="100%" height="100%" viewBox="0 0 200 180" fill="none">
-                          <circle cx="50" cy="140" r="28" fill="#1E1B4B" stroke="#6C38FF" strokeWidth="5"/>
-                          <circle cx="50" cy="140" r="14" fill="#E2E8F0"/>
-                          <circle cx="155" cy="140" r="28" fill="#1E1B4B" stroke="#6C38FF" strokeWidth="5"/>
-                          <circle cx="155" cy="140" r="14" fill="#E2E8F0"/>
-                          <path d="M45 130 Q70 120 100 125 L145 130" stroke="#0F172A" strokeWidth="11" strokeLinecap="round"/>
-                          <path d="M75 125 L95 85 L140 100 L145 130 Z" fill="#6C38FF"/>
-                          <path d="M60 85 Q90 80 115 85" stroke="#1E1B4B" strokeWidth="9" strokeLinecap="round"/>
-                          <path d="M135 125 L160 50" stroke="#0F172A" strokeWidth="7" strokeLinecap="round"/>
-                          <path d="M148 48 L170 48" stroke="#1E1B4B" strokeWidth="5" strokeLinecap="round"/>
-                          <circle cx="168" cy="52" r="5" fill="#00D26A"/>
-                        </svg>
-                      </div>
-                    )}
+                    ) : null}
 
                     {/* Left Typography & CTA: Rendered ONLY if text/button enabled */}
                     {hasTextInPreview ? (
@@ -2804,6 +3035,7 @@ export default function WhiteLabelManagement() {
                               margin: 0,
                               fontSize: `${Math.round((activeSlide.titleFontSize || 26) * 0.72)}px`,
                               color: activeSlide.titleColor || '#1E1B4B',
+                              opacity: (activeSlide.titleOpacity !== undefined ? Number(activeSlide.titleOpacity) : 100) / 100,
                               lineHeight: 1.15,
                               whiteSpace: 'pre-line',
                               ...fontFamStyle
@@ -2820,8 +3052,10 @@ export default function WhiteLabelManagement() {
                               margin: 0,
                               fontSize: `${Math.round((activeSlide.subFontSize || 12) * 0.75)}px`,
                               color: activeSlide.subColor || '#475569',
+                              opacity: (activeSlide.subOpacity !== undefined ? Number(activeSlide.subOpacity) : 100) / 100,
                               lineHeight: 1.3,
-                              fontWeight: 500
+                              fontWeight: 500,
+                              ...fontFamStyle
                             }}
                           >
                             {currentSub}

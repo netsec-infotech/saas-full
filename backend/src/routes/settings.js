@@ -460,23 +460,27 @@ router.post('/upload-asset', async (req, res) => {
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
     }
-    // Automatically delete replaced previous file to prevent VPS disk fill-up
-    const previousUrl = req.body.previousUrl || req.body.replaceUrl || req.body.oldUrl;
-    if (previousUrl && typeof previousUrl === 'string') {
-      safeDeleteUploadFile(previousUrl);
-    }
 
     const targetPath = path.join(targetDir, fileName);
     fs.writeFileSync(targetPath, buffer);
 
-    // Also replicate to backend/uploads if folder exists for direct uploads route fallback
-    try {
-      const altTargetDir = path.join(__dirname, '../uploads');
-      if (!fs.existsSync(altTargetDir)) {
-        fs.mkdirSync(altTargetDir, { recursive: true });
-      }
-      fs.writeFileSync(path.join(altTargetDir, fileName), buffer);
-    } catch (_) {}
+    // Also replicate to backend/uploads and cwd uploads for maximum compatibility across VPS & local dev
+    const extraDirs = [
+      path.join(__dirname, '../../uploads'),
+      path.join(process.cwd(), 'uploads'),
+      path.join(process.cwd(), 'backend/uploads'),
+      path.join(process.cwd(), 'backend/public/uploads'),
+      '/home/evegah/saas-full/backend/public/uploads',
+      '/home/evegah/saas-full/backend/uploads'
+    ];
+    for (const altDir of extraDirs) {
+      try {
+        if (!fs.existsSync(altDir)) {
+          fs.mkdirSync(altDir, { recursive: true });
+        }
+        fs.writeFileSync(path.join(altDir, fileName), buffer);
+      } catch (_) {}
+    }
 
     const protocol = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
     const host = req.get('host') || 'localhost:5000';
@@ -568,12 +572,46 @@ const handleSaveSliderSettings = async (req, res) => {
       existing = { ...existing, ...existing.value };
     }
 
-    const home_sliders = Array.isArray(val.home_sliders)
+    const sanitizeSlide = (s, idx) => {
+      const title = s.title !== undefined ? String(s.title) : '';
+      const lines = Array.isArray(s.lines) && s.lines.length > 0
+        ? s.lines
+        : (title ? title.split('\n') : []);
+      const subtitle = s.subtitle !== undefined ? String(s.subtitle) : (s.sub !== undefined ? String(s.sub) : '');
+      const tag = s.tag !== undefined ? String(s.tag) : (s.badgeText !== undefined ? String(s.badgeText) : `Slider ${idx + 1}`);
+
+      return {
+        ...s,
+        title,
+        lines,
+        subtitle,
+        sub: subtitle,
+        tag,
+        badgeText: tag,
+        showCutout: s.showCutout !== false && Boolean(s.front),
+        bgOpacity: s.bgOpacity !== undefined ? Number(s.bgOpacity) : 100,
+        bgOffsetX: s.bgOffsetX !== undefined ? Number(s.bgOffsetX) : 0,
+        bgOffsetY: s.bgOffsetY !== undefined ? Number(s.bgOffsetY) : 0,
+        bgScale: s.bgScale !== undefined ? Number(s.bgScale) : 1.0,
+        titleOpacity: s.titleOpacity !== undefined ? Number(s.titleOpacity) : 100,
+        subOpacity: s.subOpacity !== undefined ? Number(s.subOpacity) : 100,
+        textOffsetX: s.textOffsetX !== undefined ? Number(s.textOffsetX) : 14,
+        textOffsetY: s.textOffsetY !== undefined ? Number(s.textOffsetY) : 18,
+        textWidthPercent: s.textWidthPercent !== undefined ? Number(s.textWidthPercent) : 92,
+        fontStyle: s.fontStyle || 'signature',
+        fontFamily: s.fontFamily || s.fontStyle || 'signature',
+      };
+    };
+
+    const rawHome = Array.isArray(val.home_sliders)
       ? val.home_sliders
       : (Array.isArray(payload.home_sliders) ? payload.home_sliders : (existing.home_sliders || []));
-    const rent_sliders = Array.isArray(val.rent_sliders)
+    const rawRent = Array.isArray(val.rent_sliders)
       ? val.rent_sliders
       : (Array.isArray(payload.rent_sliders) ? payload.rent_sliders : (existing.rent_sliders || []));
+
+    const home_sliders = rawHome.map((s, i) => sanitizeSlide(s, i));
+    const rent_sliders = rawRent.map((s, i) => sanitizeSlide(s, i));
 
     const updated = {
       ...existing,
@@ -609,6 +647,8 @@ const handleSaveSliderSettings = async (req, res) => {
         '/home/evegah/saas-full/backend/public/uploads',
         '/home/evegah/saas-full/backend/uploads',
       ];
+      // Only prune abandoned temporary slider upload files older than 30 days
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
       checkDirs.forEach((dir) => {
         if (fs.existsSync(dir)) {
           const files = fs.readdirSync(dir);
@@ -617,9 +657,9 @@ const handleSaveSliderSettings = async (req, res) => {
               try {
                 const fullP = path.join(dir, f);
                 const stat = fs.statSync(fullP);
-                if (Date.now() - stat.mtimeMs > 5 * 60 * 1000) {
+                if (Date.now() - stat.mtimeMs > THIRTY_DAYS_MS) {
                   fs.unlinkSync(fullP);
-                  console.log(`[Storage Auto-Prune] Deleted unreferenced slider file: ${f}`);
+                  console.log(`[Storage Auto-Prune] Deleted unreferenced slider file older than 30 days: ${f}`);
                 }
               } catch (_) {}
             }
