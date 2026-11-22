@@ -2025,7 +2025,7 @@ function ZoneManagerRoleDashboard() {
                     fontSize: '11px',
                     fontWeight: 750
                   }}>
-                    {activeKpiTable === 'active_rides' && `${(stats?.activeRides || []).length} Records`}
+                    {activeKpiTable === 'active_rides' && `${(stats?.activeRides || []).filter((r: any) => !['return', 'returned', 'completed', 'cancelled'].includes((r.status || '').toLowerCase().trim())).length} Active Records`}
                     {activeKpiTable === 'riders' && `${(stats?.riders || []).length} Riders`}
                     {activeKpiTable === 'rentals' && `${(stats?.rentals || []).length} Bookings`}
                     {activeKpiTable === 'revenue' && `${(stats?.revenuePayments || []).length} Transactions`}
@@ -2091,22 +2091,28 @@ function ZoneManagerRoleDashboard() {
               <div className="sa-card-body" style={{ padding: 0 }}>
                 {/* ── 1. ACTIVE RIDES TABLE ── */}
                 {activeKpiTable === 'active_rides' && (() => {
-                  const list = (stats?.activeRides || []).filter((r: any) => {
-                    if (!tableSearch) return true;
-                    const q = tableSearch.toLowerCase();
-                    return (r.rider_name || '').toLowerCase().includes(q) ||
-                           (r.mobile || '').toLowerCase().includes(q) ||
-                           (r.vehicle_number || '').toLowerCase().includes(q) ||
-                           (r.battery_id || '').toLowerCase().includes(q);
-                  });
+                  const list = (stats?.activeRides || [])
+                    .filter((r: any) => {
+                      const st = (r.status || '').toLowerCase().trim();
+                      if (st === 'return' || st === 'returned' || st === 'completed' || st === 'cancelled') return false;
+                      if (!tableSearch) return true;
+                      const q = tableSearch.toLowerCase();
+                      return (r.rider_name || '').toLowerCase().includes(q) ||
+                             (r.mobile || '').toLowerCase().includes(q) ||
+                             (r.vehicle_number || '').toLowerCase().includes(q) ||
+                             (r.battery_id || '').toLowerCase().includes(q);
+                    })
+                    .map((r: any) => {
+                      const st = (r.status || '').toLowerCase().trim();
+                      const isActive = st.includes('retain') || st.includes('active') || st.includes('ride') || st === 'ongoing' || st === 'subscribed';
+                      return {
+                        ...r,
+                        displayStatus: isActive ? 'Active' : r.status
+                      };
+                    });
 
                   return (
                     <div style={{ overflowX: 'auto', maxHeight: '420px', overflowY: 'auto' }}>
-                      {!stats?.hasOngoingRides && (
-                        <div style={{ background: '#FFFBEB', padding: '10px 18px', borderBottom: '1px solid #FDE68A', fontSize: '12px', color: '#92400E', fontWeight: 600 }}>
-                          ℹ️ No active trips currently on road in {activeZone}. Displaying recent fleet ride records in this zone:
-                        </div>
-                      )}
                       <table className="ev-table" style={{ margin: 0 }}>
                         <thead style={{ position: 'sticky', top: 0, zIndex: 2, background: '#F8FAFC' }}>
                           <tr>
@@ -2123,7 +2129,7 @@ function ZoneManagerRoleDashboard() {
                         </thead>
                         <tbody>
                           {list.length === 0 ? (
-                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No ride records found matching filter.</td></tr>
+                            <tr><td colSpan={9} style={{ textAlign: 'center', padding: '36px', color: '#94A3B8', fontWeight: 600 }}>No active rides currently on road in {activeZone}.</td></tr>
                           ) : (
                             sortKpiList(list).map((r: any, idx: number) => (
                               <tr key={r.id || idx}>
@@ -2143,8 +2149,8 @@ function ZoneManagerRoleDashboard() {
                                   {r.return_date ? new Date(r.return_date).toLocaleString('en-IN') : '-'}
                                 </td>
                                 <td>
-                                  <span className={`sa-badge ${r.status === 'Active' || r.status === 'In Ride' || r.status === 'Active Ride' ? 'sa-badge-green' : r.status === 'Return' ? 'sa-badge-blue' : 'sa-badge-orange'}`}>
-                                    {r.status}
+                                  <span className="sa-badge sa-badge-green">
+                                    {r.displayStatus || 'Active'}
                                   </span>
                                 </td>
                                 <td>

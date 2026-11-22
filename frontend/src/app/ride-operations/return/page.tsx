@@ -1268,21 +1268,26 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
   const [chargerReturned, setChargerReturned] = useState(true);
   const [inspectionNotes, setInspectionNotes] = useState('');
 
-  // 26-Point Inspection & Assessment States (Image 2)
-  const [inspectionItemsState, setInspectionItemsState] = useState<Record<number, {
+  // On-demand 26-Point Inspection Checklist States (empty by default as per requirement)
+  const [addedInspectionItems, setAddedInspectionItems] = useState<Array<{
+    id: number;
+    item: string;
+    criteria: string;
     response: 'Pass' | 'Fail';
     penalty: number;
     remarks: string;
-    photoRef: string;
-  }>>(() => {
-    const init: any = {};
-    INSPECTION_CRITERIA_LIST.forEach(it => {
-      init[it.id] = { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
-    });
-    return init;
-  });
+    photoUrl: string;
+  }>>([]);
 
-  const [selectedInspectionId, setSelectedInspectionId] = useState<number>(1);
+  const [draftItemIndex, setDraftItemIndex] = useState<number | null>(null);
+  const [draftInspectionId, setDraftInspectionId] = useState<number>(1);
+  const [draftResponse, setDraftResponse] = useState<'Pass' | 'Fail'>('Fail');
+  const [draftPenalty, setDraftPenalty] = useState<number>(200);
+  const [draftRemarks, setDraftRemarks] = useState<string>('');
+  const [draftPhotoUrl, setDraftPhotoUrl] = useState<string>('');
+  const [draftPhotoName, setDraftPhotoName] = useState<string>('');
+  const [previewModalImg, setPreviewModalImg] = useState<string | null>(null);
+
   const [finalVehicleStatus, setFinalVehicleStatus] = useState<'Available for Next Ride' | 'Maintenance Required' | 'On Hold' | 'Accident Review'>('Available for Next Ride');
   const [maintenanceRequired, setMaintenanceRequired] = useState<'Yes' | 'No'>('No');
   const [maintenancePriority, setMaintenancePriority] = useState<'Low' | 'Medium' | 'High' | 'Critical'>('Medium');
@@ -1292,8 +1297,90 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
   const [inspectorName, setInspectorName] = useState('Speed Force (Zone Admin)');
 
   const total26Penalty = useMemo(() => {
-    return Object.values(inspectionItemsState).reduce((acc, curr) => acc + (Number(curr.penalty) || 0), 0);
-  }, [inspectionItemsState]);
+    return addedInspectionItems.reduce((acc, curr) => acc + (Number(curr.penalty) || 0), 0);
+  }, [addedInspectionItems]);
+
+  const handleDraftImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDraftPhotoName(file.name);
+    const reader = new FileReader();
+    reader.onload = (uploadEvent) => {
+      const base64 = uploadEvent.target?.result as string;
+      setDraftPhotoUrl(base64);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAddOrUpdateInspectionItem = () => {
+    const meta = INSPECTION_CRITERIA_LIST.find(it => it.id === draftInspectionId) || INSPECTION_CRITERIA_LIST[0];
+    const newRow = {
+      id: meta.id,
+      item: meta.item,
+      criteria: meta.criteria,
+      response: draftResponse,
+      penalty: Number(draftPenalty) || 0,
+      remarks: draftRemarks.trim(),
+      photoUrl: draftPhotoUrl
+    };
+
+    setAddedInspectionItems(prev => {
+      if (draftItemIndex !== null && draftItemIndex >= 0 && draftItemIndex < prev.length) {
+        const updated = [...prev];
+        updated[draftItemIndex] = newRow;
+        return updated;
+      }
+      const existingIdx = prev.findIndex(r => r.id === meta.id);
+      if (existingIdx !== -1) {
+        const updated = [...prev];
+        updated[existingIdx] = newRow;
+        return updated;
+      }
+      return [...prev, newRow];
+    });
+
+    if (Number(draftPenalty) > 0 || draftResponse === 'Fail') {
+      setMaintenanceRequired('Yes');
+      setFinalVehicleStatus('Maintenance Required');
+    }
+
+    // Reset draft form
+    setDraftItemIndex(null);
+    setDraftInspectionId(prev => (prev < 26 ? prev + 1 : 1));
+    setDraftResponse('Fail');
+    setDraftPenalty(200);
+    setDraftRemarks('');
+    setDraftPhotoUrl('');
+    setDraftPhotoName('');
+  };
+
+  const handleCancelDraftInspection = () => {
+    setDraftItemIndex(null);
+    setDraftResponse('Fail');
+    setDraftPenalty(0);
+    setDraftRemarks('');
+    setDraftPhotoUrl('');
+    setDraftPhotoName('');
+  };
+
+  const handleEditInspectionRow = (idx: number) => {
+    const row = addedInspectionItems[idx];
+    if (!row) return;
+    setDraftItemIndex(idx);
+    setDraftInspectionId(row.id);
+    setDraftResponse(row.response);
+    setDraftPenalty(row.penalty);
+    setDraftRemarks(row.remarks);
+    setDraftPhotoUrl(row.photoUrl);
+    setDraftPhotoName(row.photoUrl ? `Evidence #${row.id}` : '');
+  };
+
+  const handleDeleteInspectionRow = (idx: number) => {
+    setAddedInspectionItems(prev => prev.filter((_, i) => i !== idx));
+    if (draftItemIndex === idx) {
+      handleCancelDraftInspection();
+    }
+  };
 
   // Super Admin Approval Queue States (Step 3)
   const [approvalPriority, setApprovalPriority] = useState<'standard' | 'urgent'>('standard');
@@ -1519,16 +1606,8 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
     return (matchesQ && matchesZone) || (q.length > 0 && matchesQ);
   });
 
-  // Calculate return deductions & refund (incorporating 26-item checklist assessment)
-  let deductions = total26Penalty;
-  if (bodyDmg === 'minor') deductions += 250;
-  if (bodyDmg === 'major') deductions += 500;
-  if (tyreCond === 'worn') deductions += 150;
-  if (tyreCond === 'damaged') deductions += 350;
-  if (cleanliness === 'dirty') deductions += 80;
-  if (batteryHealth === 'issue') deductions += 200;
-  if (!chargerReturned) deductions += 200;
-  if (!helmetReturned) deductions += 300;
+  // Calculate return deductions & refund (purely driven by 26-point inspection penalties)
+  const deductions = total26Penalty;
 
   const currentDeposit = (selectedRider?.deposit_amount !== undefined && selectedRider?.deposit_amount !== null) ? Number(selectedRider.deposit_amount) : Number(selectedRider?.deposit ?? 0);
   const netRefund = Math.max(0, currentDeposit - deductions);
@@ -1536,17 +1615,8 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
 
   // Reset checklist helper
   const resetInspectionAllGood = () => {
-    setBodyDmg('clean');
-    setTyreCond('good');
-    setCleanliness('clean');
-    setBatteryHealth('good');
-    setHelmetReturned(true);
-    setChargerReturned(true);
-    const clean26: any = {};
-    INSPECTION_CRITERIA_LIST.forEach(it => {
-      clean26[it.id] = { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
-    });
-    setInspectionItemsState(clean26);
+    setAddedInspectionItems([]);
+    handleCancelDraftInspection();
     setFinalVehicleStatus('Available for Next Ride');
     setMaintenanceRequired('No');
     setFinalRemarks('');
@@ -1667,15 +1737,18 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
   const handleCompleteReturn = async () => {
     setLoading(true);
     try {
-      const checklistPayload = INSPECTION_CRITERIA_LIST.map(it => ({
-        sr_no: it.id,
-        item: it.item,
-        criteria: it.criteria,
-        response: inspectionItemsState[it.id]?.response || 'Pass',
-        penalty: Number(inspectionItemsState[it.id]?.penalty) || 0,
-        remarks: inspectionItemsState[it.id]?.remarks || '',
-        photo_ref: inspectionItemsState[it.id]?.photoRef || ''
-      }));
+      const checklistPayload = INSPECTION_CRITERIA_LIST.map(it => {
+        const added = addedInspectionItems.find(a => a.id === it.id);
+        return {
+          sr_no: it.id,
+          item: it.item,
+          criteria: it.criteria,
+          response: added ? added.response : 'Pass',
+          penalty: added ? Number(added.penalty) || 0 : 0,
+          remarks: added ? added.remarks : '',
+          photo_ref: added ? added.photoUrl : ''
+        };
+      });
 
       await api.post('/rides/return', {
         rider_name: selectedRider?.name,
@@ -2198,358 +2271,199 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
                               })}
                             </div>
 
-                            {/* SECTION 2: 4-Point Physical & Technical Condition Matrix */}
-                            <div className="chk-section-hdr">
+                            {/* SECTION 2: Comprehensive 26-Point Inspection & Penalty Assessment */}
+                            <div className="chk-section-hdr" style={{ marginTop: '20px' }}>
                               <div className="chk-section-title">
-                                <IShield /> 2. Physical &amp; Diagnostic Condition Assessment
-                              </div>
-                              <span className={`chk-step-pill ${deductions === 0 ? 'good' : ''}`}>
-                                {deductions === 0 ? 'Zero Damage Deductions' : `Current Deductions: -₹${deductions}`}
-                              </span>
-                            </div>
-
-                            <div className="chk-matrix-grid">
-
-                              {/* Category A: Body & Frame */}
-                              <div className="chk-cat-card">
-                                <div className="chk-cat-hdr">
-                                  <div className="chk-cat-title">
-                                    <span className="chk-cat-icon"><IScooter /></span>
-                                    Body Panels &amp; Chassis
-                                  </div>
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: bodyDmg === 'clean' ? '#16A34A' : '#DC2626' }}>
-                                    {bodyDmg === 'clean' ? '₹0' : bodyDmg === 'minor' ? '-₹250' : '-₹500'}
-                                  </span>
-                                </div>
-                                <div className="chk-opt-list">
-                                  {[
-                                    { key: 'clean', label: 'Clean / Intact Panels', sub: 'No new scratches or dents', fee: '₹0', tone: 'sel-good', badgeBg: '#DCFCE7', badgeCol: '#15803D' },
-                                    { key: 'minor', label: 'Minor Scratches / Scuffs', sub: 'Surface paint mark < 5cm', fee: '-₹250', tone: 'sel-warn', badgeBg: '#FEF3C7', badgeCol: '#B45309' },
-                                    { key: 'major', label: 'Major Dent / Cracked Panel', sub: 'Requires panel replacement', fee: '-₹500', tone: 'sel-bad', badgeBg: '#FEE2E2', badgeCol: '#DC2626' },
-                                  ].map((opt) => (
-                                    <div
-                                      key={opt.key}
-                                      className={`chk-opt-tile ${bodyDmg === opt.key ? opt.tone : ''}`}
-                                      onClick={() => setBodyDmg(opt.key as any)}
-                                    >
-                                      <div className="chk-opt-left">
-                                        <div className="chk-dot" />
-                                        <div>
-                                          <div className="chk-opt-name">{opt.label}</div>
-                                          <span className="chk-opt-sub">{opt.sub}</span>
-                                        </div>
-                                      </div>
-                                      <span className="chk-opt-fee" style={{ background: opt.badgeBg, color: opt.badgeCol }}>
-                                        {opt.fee}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* Category B: Tyres & Brakes */}
-                              <div className="chk-cat-card">
-                                <div className="chk-cat-hdr">
-                                  <div className="chk-cat-title">
-                                    <span className="chk-cat-icon">🛞</span>
-                                    Tyres, Rims &amp; Brakes
-                                  </div>
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: tyreCond === 'good' ? '#16A34A' : '#DC2626' }}>
-                                    {tyreCond === 'good' ? '₹0' : tyreCond === 'worn' ? '-₹150' : '-₹350'}
-                                  </span>
-                                </div>
-                                <div className="chk-opt-list">
-                                  {[
-                                    { key: 'good', label: 'Good Tread & Brake Bite', sub: 'Proper pressure & responsive levers', fee: '₹0', tone: 'sel-good', badgeBg: '#DCFCE7', badgeCol: '#15803D' },
-                                    { key: 'worn', label: 'Heavy Tread Wear / Loose Brake', sub: 'Requires brake cable adjustment', fee: '-₹150', tone: 'sel-warn', badgeBg: '#FEF3C7', badgeCol: '#B45309' },
-                                    { key: 'damaged', label: 'Punctured Tyre / Bent Rim', sub: 'Requires vulcanizing or tube swap', fee: '-₹350', tone: 'sel-bad', badgeBg: '#FEE2E2', badgeCol: '#DC2626' },
-                                  ].map((opt) => (
-                                    <div
-                                      key={opt.key}
-                                      className={`chk-opt-tile ${tyreCond === opt.key ? opt.tone : ''}`}
-                                      onClick={() => setTyreCond(opt.key as any)}
-                                    >
-                                      <div className="chk-opt-left">
-                                        <div className="chk-dot" />
-                                        <div>
-                                          <div className="chk-opt-name">{opt.label}</div>
-                                          <span className="chk-opt-sub">{opt.sub}</span>
-                                        </div>
-                                      </div>
-                                      <span className="chk-opt-fee" style={{ background: opt.badgeBg, color: opt.badgeCol }}>
-                                        {opt.fee}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* Category C: Battery SOC & BMS Health */}
-                              <div className="chk-cat-card">
-                                <div className="chk-cat-hdr">
-                                  <div className="chk-cat-title">
-                                    <span className="chk-cat-icon"><IBattery /></span>
-                                    Battery SOC &amp; Telemetry
-                                  </div>
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: batteryHealth === 'good' ? '#16A34A' : '#DC2626' }}>
-                                    {batteryHealth === 'good' ? '₹0' : '-₹200'}
-                                  </span>
-                                </div>
-                                <div className="chk-opt-list">
-                                  {[
-                                    { key: 'good', label: 'Healthy Charge (SOC > 20%)', sub: 'Terminals intact, normal BMS reading', fee: '₹0', tone: 'sel-good', badgeBg: '#DCFCE7', badgeCol: '#15803D' },
-                                    { key: 'issue', label: 'Deep Discharge / BMS Fault', sub: 'SOC < 5% or seal tampered', fee: '-₹200', tone: 'sel-bad', badgeBg: '#FEE2E2', badgeCol: '#DC2626' },
-                                  ].map((opt) => (
-                                    <div
-                                      key={opt.key}
-                                      className={`chk-opt-tile ${batteryHealth === opt.key ? opt.tone : ''}`}
-                                      onClick={() => setBatteryHealth(opt.key as any)}
-                                    >
-                                      <div className="chk-opt-left">
-                                        <div className="chk-dot" />
-                                        <div>
-                                          <div className="chk-opt-name">{opt.label}</div>
-                                          <span className="chk-opt-sub">{opt.sub}</span>
-                                        </div>
-                                      </div>
-                                      <span className="chk-opt-fee" style={{ background: opt.badgeBg, color: opt.badgeCol }}>
-                                        {opt.fee}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {/* Category D: Vehicle Cleanliness */}
-                              <div className="chk-cat-card">
-                                <div className="chk-cat-hdr">
-                                  <div className="chk-cat-title">
-                                    <span className="chk-cat-icon">✨</span>
-                                    Vehicle Hygiene &amp; Wash
-                                  </div>
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: cleanliness !== 'dirty' ? '#16A34A' : '#DC2626' }}>
-                                    {cleanliness !== 'dirty' ? '₹0' : '-₹80'}
-                                  </span>
-                                </div>
-                                <div className="chk-opt-list">
-                                  {[
-                                    { key: 'clean', label: 'Clean & Ready for Re-Lease', sub: 'Standard road dust only', fee: '₹0', tone: 'sel-good', badgeBg: '#DCFCE7', badgeCol: '#15803D' },
-                                    { key: 'dirty', label: 'Heavy Mud / Stains (Wash Required)', sub: 'Requires pressure wash before dispatch', fee: '-₹80', tone: 'sel-warn', badgeBg: '#FEF3C7', badgeCol: '#B45309' },
-                                  ].map((opt) => (
-                                    <div
-                                      key={opt.key}
-                                      className={`chk-opt-tile ${cleanliness === opt.key ? opt.tone : ''}`}
-                                      onClick={() => setCleanliness(opt.key as any)}
-                                    >
-                                      <div className="chk-opt-left">
-                                        <div className="chk-dot" />
-                                        <div>
-                                          <div className="chk-opt-name">{opt.label}</div>
-                                          <span className="chk-opt-sub">{opt.sub}</span>
-                                        </div>
-                                      </div>
-                                      <span className="chk-opt-fee" style={{ background: opt.badgeBg, color: opt.badgeCol }}>
-                                        {opt.fee}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                            </div>
-
-                            {/* SECTION 3: Tactile Issued Accessories Check */}
-                            <div className="chk-section-hdr">
-                              <div className="chk-section-title">
-                                🪖 3. Issued Accessories Handover Verification
-                              </div>
-                              <span className="chk-step-pill">Tap card to toggle Returned / Missing</span>
-                            </div>
-
-                            <div className="chk-acc-grid">
-                              {/* Helmet Card */}
-                              <div
-                                className={`chk-acc-card ${helmetReturned ? 'returned' : 'missing'}`}
-                                onClick={() => setHelmetReturned(!helmetReturned)}
-                              >
-                                <div className="chk-acc-left">
-                                  <div className="chk-acc-icon">🪖</div>
-                                  <div>
-                                    <div className="chk-acc-title">Evegah ISI Rider Helmet</div>
-                                    <div className="chk-acc-sub">
-                                      {helmetReturned ? 'Handed over intact with visor' : 'Missing or damaged — ₹300 fee applied'}
-                                    </div>
-                                  </div>
-                                </div>
-                                <span className="chk-acc-pill">
-                                  {helmetReturned ? '✓ RETURNED' : '✕ MISSING (-₹300)'}
-                                </span>
-                              </div>
-
-                              {/* Charger Card */}
-                              <div
-                                className={`chk-acc-card ${chargerReturned ? 'returned' : 'missing'}`}
-                                onClick={() => setChargerReturned(!chargerReturned)}
-                              >
-                                <div className="chk-acc-left">
-                                  <div className="chk-acc-icon">🔌</div>
-                                  <div>
-                                    <div className="chk-acc-title">60V Smart Fast Charger</div>
-                                    <div className="chk-acc-sub">
-                                      {chargerReturned ? 'Power cord & adapter verified' : 'Not returned — ₹200 fee applied'}
-                                    </div>
-                                  </div>
-                                </div>
-                                <span className="chk-acc-pill">
-                                  {chargerReturned ? '✓ RETURNED' : '✕ MISSING (-₹200)'}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* SECTION 4: Comprehensive 26-Point Inspection & Penalty Assessment (Excel Specification) */}
-                            <div className="chk-section-hdr" style={{ marginTop: '24px' }}>
-                              <div className="chk-section-title">
-                                📋 4. E-Scooter Vehicle Return Inspection &amp; Penalty Assessment (26-Point Criteria)
+                                📋 2. E-Scooter Vehicle Return Inspection &amp; Penalty Assessment (26-Point Criteria)
                               </div>
                               <span className="chk-step-pill" style={{ background: total26Penalty > 0 ? '#FEE2E2' : '#DCFCE7', color: total26Penalty > 0 ? '#DC2626' : '#15803D' }}>
                                 Total Assessment Penalty: ₹{total26Penalty.toFixed(2)}
                               </span>
                             </div>
 
-                            {/* Dropdown Quick Item Selector */}
-                            <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
-                                <div style={{ minWidth: 260, flex: 1 }}>
-                                  <label style={{ fontSize: '12px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
-                                    Select Inspection Item to Inspect / Apply Defect Penalty:
+                            {/* On-Demand Item Selector & Penalty Adder */}
+                            <div style={{ background: '#F8FAFC', border: '1.5px solid #CBD5E1', borderRadius: '12px', padding: '16px 18px', marginBottom: '16px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
+                                  {draftItemIndex !== null ? '✏️ Edit Inspection Assessment Item' : '➕ Select & Add Inspection Item / Defect Penalty'}
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#64748B' }}>
+                                  Select an item from the 26 criteria, assign penalty &amp; evidence photo, then click <strong>Add Item</strong>.
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+                                {/* 1. Dropdown for 26 checklist items */}
+                                <div style={{ gridColumn: 'span 2' }}>
+                                  <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Inspection Item (from 26-Point Criteria)
                                   </label>
                                   <select 
                                     className="rh-select"
-                                    value={selectedInspectionId}
-                                    onChange={(e) => setSelectedInspectionId(Number(e.target.value))}
-                                    style={{ height: '38px', fontSize: '12.5px', background: '#FFF' }}
+                                    value={draftInspectionId}
+                                    onChange={(e) => {
+                                      const id = Number(e.target.value);
+                                      setDraftInspectionId(id);
+                                    }}
+                                    style={{ width: '100%', height: '38px', fontSize: '12px', background: '#FFF' }}
                                   >
                                     {INSPECTION_CRITERIA_LIST.map(it => (
                                       <option key={it.id} value={it.id}>
-                                        #{it.id} {it.item} {inspectionItemsState[it.id]?.penalty > 0 ? `(⚠️ Penalty ₹${inspectionItemsState[it.id].penalty})` : ''}
+                                        #{it.id} — {it.item}: {it.criteria.slice(0, 55)}...
                                       </option>
                                     ))}
                                   </select>
                                 </div>
-                                
-                                {(() => {
-                                  const cur = inspectionItemsState[selectedInspectionId] || { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
-                                  return (
-                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                                      <div>
-                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Response</label>
-                                        <select
-                                          value={cur.response}
-                                          onChange={(e) => {
-                                            const resp = e.target.value as any;
-                                            setInspectionItemsState(prev => ({
-                                              ...prev,
-                                              [selectedInspectionId]: {
-                                                ...prev[selectedInspectionId],
-                                                response: resp,
-                                                penalty: resp === 'Pass' ? 0 : (prev[selectedInspectionId]?.penalty || 200)
-                                              }
-                                            }));
-                                          }}
-                                          style={{ padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+
+                                {/* 2. Response */}
+                                <div>
+                                  <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Response
+                                  </label>
+                                  <select
+                                    value={draftResponse}
+                                    onChange={(e) => {
+                                      const resp = e.target.value as 'Pass' | 'Fail';
+                                      setDraftResponse(resp);
+                                      if (resp === 'Pass') setDraftPenalty(0);
+                                      else if (draftPenalty === 0) setDraftPenalty(200);
+                                    }}
+                                    style={{ width: '100%', height: '38px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700, background: '#FFF' }}
+                                  >
+                                    <option value="Fail">Fail / Defect</option>
+                                    <option value="Pass">Pass / OK</option>
+                                  </select>
+                                </div>
+
+                                {/* 3. Penalty (₹) */}
+                                <div>
+                                  <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Penalty (₹)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={draftPenalty}
+                                    onChange={(e) => {
+                                      const pVal = Math.max(0, Number(e.target.value));
+                                      setDraftPenalty(pVal);
+                                      if (pVal > 0) setDraftResponse('Fail');
+                                    }}
+                                    style={{ width: '100%', height: '38px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 800, background: '#FFF' }}
+                                  />
+                                </div>
+
+                                {/* 4. Remarks */}
+                                <div style={{ gridColumn: 'span 2' }}>
+                                  <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Remarks / Defect Details
+                                  </label>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. Scratched mirror, bent rim, loose wiring..."
+                                    value={draftRemarks}
+                                    onChange={(e) => setDraftRemarks(e.target.value)}
+                                    style={{ width: '100%', height: '38px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', background: '#FFF' }}
+                                  />
+                                </div>
+
+                                {/* 5. Photo Upload */}
+                                <div style={{ gridColumn: 'span 2' }}>
+                                  <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Photo / Evidence Upload
+                                  </label>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      onChange={handleDraftImageUpload}
+                                      style={{ fontSize: '12px' }}
+                                    />
+                                    {draftPhotoUrl && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <img 
+                                          src={draftPhotoUrl} 
+                                          alt="Preview" 
+                                          onClick={() => setPreviewModalImg(draftPhotoUrl)}
+                                          style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, border: '1.5px solid #10B981', cursor: 'pointer' }}
+                                          title="Click to view full image"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => { setDraftPhotoUrl(''); setDraftPhotoName(''); }}
+                                          style={{ background: '#FEE2E2', border: 'none', color: '#DC2626', borderRadius: '4px', padding: '3px 6px', fontSize: '11px', cursor: 'pointer', fontWeight: 700 }}
                                         >
-                                          <option value="Pass">Pass / OK</option>
-                                          <option value="Fail">Fail / Defect</option>
-                                        </select>
+                                          Remove
+                                        </button>
                                       </div>
-                                      <div>
-                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Penalty (₹)</label>
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          value={cur.penalty}
-                                          onChange={(e) => {
-                                            const pVal = Math.max(0, Number(e.target.value));
-                                            setInspectionItemsState(prev => ({
-                                              ...prev,
-                                              [selectedInspectionId]: {
-                                                ...prev[selectedInspectionId],
-                                                penalty: pVal,
-                                                response: pVal > 0 ? 'Fail' : prev[selectedInspectionId]?.response
-                                              }
-                                            }));
-                                          }}
-                                          style={{ width: '90px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 800 }}
-                                        />
-                                      </div>
-                                      <div>
-                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Defect Remarks</label>
-                                        <input
-                                          type="text"
-                                          placeholder="e.g. Scratched mirror or dent..."
-                                          value={cur.remarks}
-                                          onChange={(e) => {
-                                            const val = e.target.value;
-                                            setInspectionItemsState(prev => ({
-                                              ...prev,
-                                              [selectedInspectionId]: { ...prev[selectedInspectionId], remarks: val }
-                                            }));
-                                          }}
-                                          style={{ width: '200px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px' }}
-                                        />
-                                      </div>
-                                      <div>
-                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Evidence / Photo Ref</label>
-                                        <input
-                                          type="text"
-                                          placeholder="e.g. Angle Photo #2"
-                                          value={cur.photoRef}
-                                          onChange={(e) => {
-                                            const val = e.target.value;
-                                            setInspectionItemsState(prev => ({
-                                              ...prev,
-                                              [selectedInspectionId]: { ...prev[selectedInspectionId], photoRef: val }
-                                            }));
-                                          }}
-                                          style={{ width: '140px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px' }}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Action Buttons: Add Item & Cancel */}
+                              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelDraftInspection}
+                                  style={{
+                                    padding: '7px 16px',
+                                    borderRadius: '8px',
+                                    border: '1.5px solid #CBD5E1',
+                                    background: '#FFF',
+                                    color: '#475569',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleAddOrUpdateInspectionItem}
+                                  style={{
+                                    padding: '7px 18px',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: '#2A195C',
+                                    color: '#FFF',
+                                    fontSize: '12px',
+                                    fontWeight: 800,
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 6px rgba(42, 25, 92, 0.25)'
+                                  }}
+                                >
+                                  {draftItemIndex !== null ? '✓ Update Inspection Item' : '➕ Add Inspection Item'}
+                                </button>
                               </div>
                             </div>
 
-                            {/* Full 26-Item Inspection Table */}
+                            {/* Inspection Items Table */}
                             <div style={{ overflowX: 'auto', border: '1.5px solid #CBD5E1', borderRadius: '12px', marginBottom: '18px', background: '#FFF' }}>
                               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
                                 <thead>
                                   <tr style={{ background: '#1E3A8A', color: '#FFF' }}>
-                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '50px' }}>Sr. No.</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '50px', textAlign: 'center' }}>Sr. No.</th>
                                     <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '150px' }}>Inspection Item</th>
                                     <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '220px' }}>Inspection Criteria</th>
-                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '90px' }}>Response</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '90px', textAlign: 'center' }}>Response</th>
                                     <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '100px' }}>Penalty (₹)</th>
                                     <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '180px' }}>Remarks / Defect Details</th>
-                                    <th style={{ padding: '10px 12px', minWidth: '130px' }}>Photo / Evidence Ref.</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '130px', textAlign: 'center' }}>Photo / Evidence</th>
+                                    <th style={{ padding: '10px 12px', width: '110px', textAlign: 'center' }}>Actions</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {INSPECTION_CRITERIA_LIST.map((it, idx) => {
-                                    const itemData = inspectionItemsState[it.id] || { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
-                                    const hasPenalty = (itemData.penalty || 0) > 0;
-                                    const isSelected = selectedInspectionId === it.id;
-
-                                    return (
-                                      <tr 
-                                        key={it.id} 
-                                        style={{ 
-                                          background: hasPenalty ? '#FEF2F2' : (isSelected ? '#EFF6FF' : (idx % 2 === 0 ? '#FFF' : '#F8FAFC')),
-                                          borderBottom: '1px solid #E2E8F0',
-                                          cursor: 'pointer'
-                                        }}
-                                        onClick={() => setSelectedInspectionId(it.id)}
-                                      >
+                                  {addedInspectionItems.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={8} style={{ textAlign: 'center', padding: '30px', color: '#64748B', fontWeight: 600 }}>
+                                        No inspection defect / penalty items added yet. All 26 checklist items are deemed OK / Passed. Use the selector above to log any defective parts, damages or penalties.
+                                      </td>
+                                    </tr>
+                                  ) : (
+                                    addedInspectionItems.map((it, idx) => (
+                                      <tr key={it.id || idx} style={{ background: idx % 2 === 0 ? '#FFF' : '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>
                                         <td style={{ padding: '8px 12px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>
                                           {it.id}
                                         </td>
@@ -2559,121 +2473,67 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
                                         <td style={{ padding: '8px 12px', color: '#475569', fontSize: '11.5px' }}>
                                           {it.criteria}
                                         </td>
-                                        <td style={{ padding: '8px 12px' }}>
-                                          <select
-                                            value={itemData.response}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={(e) => {
-                                              const resp = e.target.value as any;
-                                              setInspectionItemsState(prev => ({
-                                                ...prev,
-                                                [it.id]: {
-                                                  ...prev[it.id],
-                                                  response: resp,
-                                                  penalty: resp === 'Pass' ? 0 : (prev[it.id]?.penalty || 150)
-                                                }
-                                              }));
-                                            }}
-                                            style={{
-                                              padding: '4px 6px',
-                                              borderRadius: '6px',
-                                              border: '1px solid #CBD5E1',
-                                              fontSize: '11px',
-                                              fontWeight: 700,
-                                              color: itemData.response === 'Pass' ? '#15803D' : '#DC2626',
-                                              background: itemData.response === 'Pass' ? '#F0FDF4' : '#FEF2F2'
-                                            }}
-                                          >
-                                            <option value="Pass">Pass</option>
-                                            <option value="Fail">Fail</option>
-                                          </select>
+                                        <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                          <span style={{
+                                            padding: '3px 8px',
+                                            borderRadius: '6px',
+                                            fontSize: '11px',
+                                            fontWeight: 800,
+                                            background: it.response === 'Pass' ? '#DCFCE7' : '#FEE2E2',
+                                            color: it.response === 'Pass' ? '#15803D' : '#DC2626'
+                                          }}>
+                                            {it.response}
+                                          </span>
                                         </td>
-                                        <td style={{ padding: '8px 12px' }}>
-                                          <input
-                                            type="number"
-                                            min={0}
-                                            value={itemData.penalty}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={(e) => {
-                                              const pVal = Math.max(0, Number(e.target.value));
-                                              setInspectionItemsState(prev => ({
-                                                ...prev,
-                                                [it.id]: {
-                                                  ...prev[it.id],
-                                                  penalty: pVal,
-                                                  response: pVal > 0 ? 'Fail' : prev[it.id]?.response
-                                                }
-                                              }));
-                                              if (pVal > 0) {
-                                                setMaintenanceRequired('Yes');
-                                                setFinalVehicleStatus('Maintenance Required');
-                                              }
-                                            }}
-                                            style={{
-                                              width: '80px',
-                                              padding: '4px 8px',
-                                              borderRadius: '6px',
-                                              border: '1px solid #CBD5E1',
-                                              fontSize: '12px',
-                                              fontWeight: 800,
-                                              color: hasPenalty ? '#DC2626' : '#334155'
-                                            }}
-                                          />
+                                        <td style={{ padding: '8px 12px', fontWeight: 800, color: it.penalty > 0 ? '#DC2626' : '#15803D' }}>
+                                          ₹{Number(it.penalty || 0).toFixed(2)}
                                         </td>
-                                        <td style={{ padding: '8px 12px' }}>
-                                          <input
-                                            type="text"
-                                            placeholder="Remarks..."
-                                            value={itemData.remarks}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={(e) => {
-                                              const val = e.target.value;
-                                              setInspectionItemsState(prev => ({
-                                                ...prev,
-                                                [it.id]: { ...prev[it.id], remarks: val }
-                                              }));
-                                            }}
-                                            style={{
-                                              width: '100%',
-                                              padding: '4px 8px',
-                                              borderRadius: '6px',
-                                              border: '1px solid #E2E8F0',
-                                              fontSize: '11.5px'
-                                            }}
-                                          />
+                                        <td style={{ padding: '8px 12px', color: '#334155' }}>
+                                          {it.remarks || '-'}
                                         </td>
-                                        <td style={{ padding: '8px 12px' }}>
-                                          <input
-                                            type="text"
-                                            placeholder="Photo ref..."
-                                            value={itemData.photoRef}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={(e) => {
-                                              const val = e.target.value;
-                                              setInspectionItemsState(prev => ({
-                                                ...prev,
-                                                [it.id]: { ...prev[it.id], photoRef: val }
-                                              }));
-                                            }}
-                                            style={{
-                                              width: '100%',
-                                              padding: '4px 8px',
-                                              borderRadius: '6px',
-                                              border: '1px solid #E2E8F0',
-                                              fontSize: '11.5px'
-                                            }}
-                                          />
+                                        <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                          {it.photoUrl ? (
+                                            <img
+                                              src={it.photoUrl}
+                                              alt="Defect"
+                                              onClick={() => setPreviewModalImg(it.photoUrl)}
+                                              style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 6, border: '1px solid #CBD5E1', cursor: 'pointer', display: 'inline-block' }}
+                                              title="Click to view full photo"
+                                            />
+                                          ) : (
+                                            <span style={{ color: '#94A3B8', fontSize: '11px' }}>None</span>
+                                          )}
+                                        </td>
+                                        <td style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                          <div style={{ display: 'inline-flex', gap: '6px' }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleEditInspectionRow(idx)}
+                                              style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', color: '#1D4ED8', padding: '3px 7px', borderRadius: '5px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                                              title="Edit item"
+                                            >
+                                              ✏️
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteInspectionRow(idx)}
+                                              style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', padding: '3px 7px', borderRadius: '5px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}
+                                              title="Delete item"
+                                            >
+                                              🗑️
+                                            </button>
+                                          </div>
                                         </td>
                                       </tr>
-                                    );
-                                  })}
+                                    ))
+                                  )}
 
                                   {/* TOTAL PENALTY Row */}
                                   <tr style={{ background: '#1E3A8A', color: '#FFF', fontWeight: 800, fontSize: '13px' }}>
                                     <td colSpan={4} style={{ padding: '12px 16px', textAlign: 'right', letterSpacing: '0.05em' }}>
                                       TOTAL PENALTY
                                     </td>
-                                    <td colSpan={3} style={{ padding: '12px 16px', fontSize: '15px', color: '#FEF08A' }}>
+                                    <td colSpan={4} style={{ padding: '12px 16px', fontSize: '15px', color: '#FEF08A' }}>
                                       ₹{total26Penalty.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                                     </td>
                                   </tr>
@@ -3781,7 +3641,7 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
                     </div>
                     <div className="nr-tip-row">
                       <span className="nr-tip-dot" />
-                      <span>Physically inspect the 60V charger cord and helmet visor before toggling Returned.</span>
+                      <span>Use the 26-Point Inspection criteria to add defect penalties and upload evidence photos.</span>
                     </div>
                     <div className="nr-tip-row">
                       <span className="nr-tip-dot" />
@@ -3810,6 +3670,25 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
           }}
           onClose={() => setActiveCameraSlot(null)}
         />
+      )}
+
+      {/* Full Photo Preview Modal */}
+      {previewModalImg && (
+        <div 
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setPreviewModalImg(null)}
+        >
+          <div style={{ position: 'relative', maxWidth: '85vw', maxHeight: '85vh', background: '#FFF', borderRadius: '12px', padding: '12px' }} onClick={e => e.stopPropagation()}>
+            <button 
+              type="button" 
+              onClick={() => setPreviewModalImg(null)} 
+              style={{ position: 'absolute', top: 14, right: 14, background: '#DC2626', color: '#FFF', border: 'none', borderRadius: '50%', width: 30, height: 30, cursor: 'pointer', fontWeight: 800, fontSize: '14px', zIndex: 2 }}
+            >
+              ✕
+            </button>
+            <img src={previewModalImg} alt="Evidence" style={{ maxWidth: '80vw', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px', display: 'block' }} />
+          </div>
+        </div>
       )}
     </>
   );

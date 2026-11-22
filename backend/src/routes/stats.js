@@ -691,9 +691,9 @@ router.get('/zone-admin', async (req, res) => {
       // Active vehicles in ride (live snapshot - no date filter)
       db.query(`SELECT COUNT(*) as total FROM vehicles ${zoneVehClause ? zoneVehClause + " AND vehicle_status IN ('In Ride', 'Active')" : "WHERE vehicle_status IN ('In Ride', 'Active')"}`, zoneParams),
       // Active/Upcoming reservations in ride (live snapshot - no date filter)
-      db.query(`SELECT COUNT(*) as total FROM reservations WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Upcoming', 'Confirmed') ${zoneResvClause}`, zoneParams),
+      db.query(`SELECT COUNT(*) as total FROM reservations WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Retain', 'Retain Ride', 'Upcoming', 'Confirmed') ${zoneResvClause}`, zoneParams),
       // Active renters in ride (live snapshot - no date filter)
-      db.query(`SELECT COUNT(*) as total FROM renters WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed') ${zoneRenterClause}`, zoneParams),
+      db.query(`SELECT COUNT(*) as total FROM renters WHERE status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed', 'Retain', 'Retain Ride') ${zoneRenterClause}`, zoneParams),
       // Total Fleet EVs
       db.query(`SELECT COUNT(*) as total FROM vehicles ${zoneVehClause}`, zoneParams),
       // Available Batteries
@@ -816,7 +816,7 @@ router.get('/zone-admin', async (req, res) => {
       `, zoneParams),
 
       // Interactive Dropdown KPI Tables:
-      // 1. Active Rides List
+      // 1. Active Rides List (Only ongoing & retained rides, normalized to Active)
       db.query(`
         SELECT 
           r.id::text,
@@ -827,10 +827,13 @@ router.get('/zone-admin', async (req, res) => {
           COALESCE(r.package_name, 'Rental Plan') as package_name,
           r.rental_start_date as start_date,
           r.return_date,
-          r.status,
+          CASE 
+            WHEN r.status IN ('Retain Ride', 'Retain', 'Ongoing', 'In Ride', 'Active Ride', 'Subscribed') THEN 'Active'
+            ELSE r.status 
+          END as status,
           'Subscription' as ride_type
         FROM renters r
-        WHERE r.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed')
+        WHERE r.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Subscribed', 'Retain', 'Retain Ride')
           ${zoneRenterClause}
         UNION ALL
         SELECT
@@ -842,10 +845,13 @@ router.get('/zone-admin', async (req, res) => {
           COALESCE(res.package_type, 'Reservation') as package_name,
           res.created_at as start_date,
           res.created_at as return_date,
-          res.status,
+          CASE 
+            WHEN res.status IN ('Retain Ride', 'Retain', 'Ongoing', 'In Ride', 'Active Ride') THEN 'Active'
+            ELSE res.status 
+          END as status,
           'Booking' as ride_type
         FROM reservations res
-        WHERE res.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing')
+        WHERE res.status IN ('Active', 'In Ride', 'Active Ride', 'Ongoing', 'Retain', 'Retain Ride')
           ${zoneResvClause}
         ORDER BY start_date DESC
         LIMIT 50
@@ -1096,9 +1102,7 @@ router.get('/zone-admin', async (req, res) => {
         riderPaymentDue: paymentDueRes.rows,
         draftRegistrations: draftRes.rows,
         telemetryFleet: allVehRes.rows,
-        activeRides: (activeRidesListRes && activeRidesListRes.rows && activeRidesListRes.rows.length > 0) 
-          ? activeRidesListRes.rows 
-          : (fallbackRecentRidesRes ? fallbackRecentRidesRes.rows : []),
+        activeRides: (activeRidesListRes && activeRidesListRes.rows) ? activeRidesListRes.rows : [],
         hasOngoingRides: Boolean(activeRidesListRes && activeRidesListRes.rows && activeRidesListRes.rows.length > 0),
         riders: ridersListRes ? ridersListRes.rows : [],
         rentals: rentalsListRes ? rentalsListRes.rows : [],

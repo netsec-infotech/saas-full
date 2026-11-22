@@ -1109,7 +1109,7 @@ export default function DepositRefundPage() {
                     transition: 'all .15s'
                   }}
                 >
-                  📱 WhatsApp OTP
+                  💬 2Factor SMS OTP
                 </button>
                 <button
                   type="button"
@@ -1141,7 +1141,7 @@ export default function DepositRefundPage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ padding: '12px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0', fontSize: '12px', color: '#334155' }}>
                     <div style={{ fontWeight: 700, marginBottom: '2px', color: '#0F172A' }}>Authorized Verification Mobile:</div>
-                    <div>WhatsApp OTP will be sent to <strong>+91 {maskedAuthMobile || '81******72'}</strong></div>
+                    <div>SMS OTP will be sent via 2Factor API to <strong>+91 {maskedAuthMobile || '81******72'}</strong></div>
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -1152,24 +1152,24 @@ export default function DepositRefundPage() {
                       disabled={otpSending}
                       style={{ flex: 1, justifyContent: 'center', background: '#EEF2FF', borderColor: '#C7D2FE', color: '#2A195C', fontWeight: 700 }}
                     >
-                      {otpSending ? 'Sending OTP...' : (otpSent ? 'Resend OTP' : 'Send WhatsApp OTP')}
+                      {otpSending ? 'Sending OTP via 2Factor...' : (otpSent ? 'Resend SMS OTP' : 'Send 2Factor SMS OTP')}
                     </button>
                   </div>
 
                   {otpSent && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label className="modal-lbl">Enter 6-Digit OTP</label>
+                      <label className="modal-lbl">Enter Verification OTP</label>
                       <input
                         type="text"
                         maxLength={6}
                         className="modal-input"
-                        placeholder="e.g. 123456"
+                        placeholder="Enter OTP"
                         value={authOtp}
                         onChange={(e) => setAuthOtp(e.target.value.replace(/\D/g, ''))}
                         style={{ textAlign: 'center', fontSize: '18px', letterSpacing: '4px', fontWeight: 800 }}
                         autoFocus
                       />
-                      <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 600 }}>✓ OTP sent via WhatsApp. Valid for 5 mins.</span>
+                      <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 600 }}>✓ Direct SMS OTP dispatched via 2Factor gateway. Valid for 5 mins.</span>
                     </div>
                   )}
                 </div>
