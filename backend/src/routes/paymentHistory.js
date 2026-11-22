@@ -306,13 +306,13 @@ router.get('/', async (req, res) => {
         -- 7. Direct / Cash Renter Registration Payments
         SELECT
           'rnt_' || id::text AS id,
-          COALESCE(rent_receipt_no, deposit_receipt_no, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
+          COALESCE(rider_id, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
           COALESCE(rider_id, id::text) AS reference_id,
           COALESCE(rider_name, 'Rider') AS rider_name,
           COALESCE(mobile, '') AS mobile,
           COALESCE(rent, 0)::numeric AS rent_amount,
           COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total_paid, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          COALESCE(NULLIF(total, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           'Cash' AS payment_method,
@@ -324,8 +324,8 @@ router.get('/', async (req, res) => {
           COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
           created_at
         FROM renters
-        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_paid, 0) > 0)
-          AND (booking_source = 'Form' OR payment_method ILIKE '%cash%' OR payment_method ILIKE '%counter%')
+        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total, 0) > 0)
+          AND booking_source = 'Form'
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
             WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
@@ -976,13 +976,13 @@ router.get('/export', async (req, res) => {
         -- 7. Direct / Cash Renter Registration Payments
         SELECT
           'rnt_' || id::text AS id,
-          COALESCE(rent_receipt_no, deposit_receipt_no, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
+          COALESCE(rider_id, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
           COALESCE(rider_id, id::text) AS reference_id,
           COALESCE(rider_name, 'Rider') AS rider_name,
           COALESCE(mobile, '') AS mobile,
           COALESCE(rent, 0)::numeric AS rent_amount,
           COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total_paid, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          COALESCE(NULLIF(total, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           'Cash' AS payment_method,
@@ -994,8 +994,8 @@ router.get('/export', async (req, res) => {
           COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
           created_at
         FROM renters
-        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_paid, 0) > 0)
-          AND (booking_source = 'Form' OR payment_method ILIKE '%cash%' OR payment_method ILIKE '%counter%')
+        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total, 0) > 0)
+          AND booking_source = 'Form'
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
             WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
