@@ -519,92 +519,84 @@ export default function PaymentHistoryPage() {
               </div>
             </div>
 
-            {/* KPI Cards Grid (Matches Renters/Vehicles UI) */}
+            {/* KPI Cards Grid (Matches Zone Admin Dashboard Design) */}
             <div className="ph-kpi-grid">
               {/* 1. Total Collections (Credit) */}
               <div className="ph-kpi-card">
-                <div className="ph-kpi-top">
-                  <div>
-                    <div className="ph-kpi-label">Total Collections</div>
-                    <div className="ph-kpi-val" style={{ color: '#0F172A' }}>
-                      ₹{(kpis.total_credit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="ph-kpi-sub" style={{ color: '#10B981' }}>
-                      ↑ {kpis.successful_count} successful collections
-                    </div>
+                <div className="ph-kpi-icon ic-green">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="1" x2="12" y2="23" />
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                  </svg>
+                </div>
+                <div className="ph-kpi-info">
+                  <div className="ph-kpi-label">TOTAL COLLECTIONS</div>
+                  <div className="ph-kpi-val">
+                    ₹{(kpis.total_credit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </div>
-                  <div className="ph-kpi-icon ic-green">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="12" y1="1" x2="12" y2="23" />
-                      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                    </svg>
+                  <div className="ph-kpi-sub" style={{ color: '#16A34A' }}>
+                    <span>▲</span> {kpis.successful_count} collections settled
                   </div>
                 </div>
               </div>
 
               {/* 2. Total Refunds / Debits */}
               <div className="ph-kpi-card">
-                <div className="ph-kpi-top">
-                  <div>
-                    <div className="ph-kpi-label">Total Refunds / Payouts</div>
-                    <div className="ph-kpi-val" style={{ color: '#0F172A' }}>
-                      ₹{(kpis.total_debit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="ph-kpi-sub" style={{ color: '#F97316' }}>
-                      ↓ deposits &amp; adjustments
-                    </div>
+                <div className="ph-kpi-icon ic-orange">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                    <path d="M21 3v5h-5" />
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                    <path d="M3 21v-5h5" />
+                  </svg>
+                </div>
+                <div className="ph-kpi-info">
+                  <div className="ph-kpi-label">TOTAL REFUNDS</div>
+                  <div className="ph-kpi-val">
+                    ₹{(kpis.total_debit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </div>
-                  <div className="ph-kpi-icon ic-orange">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-                      <path d="M21 3v5h-5" />
-                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-                      <path d="M3 21v-5h5" />
-                    </svg>
+                  <div className="ph-kpi-sub" style={{ color: '#DC2626' }}>
+                    <span>▼</span> Debits &amp; deposit payouts
                   </div>
                 </div>
               </div>
 
               {/* 3. Net Balance */}
               <div className="ph-kpi-card">
-                <div className="ph-kpi-top">
-                  <div>
-                    <div className="ph-kpi-label">Net Platform Settled</div>
-                    <div className="ph-kpi-val" style={{ color: '#0F172A' }}>
-                      ₹{(kpis.net_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="ph-kpi-sub" style={{ color: '#6366F1' }}>
-                      ↑ gross collections minus refunds
-                    </div>
+                <div className="ph-kpi-icon ic-purple">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                    <polyline points="17 6 23 6 23 12" />
+                  </svg>
+                </div>
+                <div className="ph-kpi-info">
+                  <div className="ph-kpi-label">NET SETTLED</div>
+                  <div className="ph-kpi-val">
+                    ₹{(kpis.net_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                   </div>
-                  <div className="ph-kpi-icon ic-purple">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-                      <polyline points="17 6 23 6 23 12" />
-                    </svg>
+                  <div className="ph-kpi-sub" style={{ color: '#4F46E5' }}>
+                    <span>▲</span> 100% verified ledger balance
                   </div>
                 </div>
               </div>
 
               {/* 4. Total Transactions Count */}
               <div className="ph-kpi-card">
-                <div className="ph-kpi-top">
-                  <div>
-                    <div className="ph-kpi-label">Total Transactions</div>
-                    <div className="ph-kpi-val" style={{ color: '#0F172A' }}>
-                      {kpis.total_transactions}
-                    </div>
-                    <div className="ph-kpi-sub" style={{ color: '#64748B' }}>
-                      <span style={{ color: '#F59E0B' }}>{kpis.pending_count} pending</span>
-                      <span>•</span>
-                      <span style={{ color: '#EF4444' }}>{kpis.failed_count} failed</span>
-                    </div>
+                <div className="ph-kpi-icon ic-blue">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                    <line x1="2" y1="10" x2="22" y2="10" />
+                  </svg>
+                </div>
+                <div className="ph-kpi-info">
+                  <div className="ph-kpi-label">TOTAL TRANSACTIONS</div>
+                  <div className="ph-kpi-val">
+                    {kpis.total_transactions}
                   </div>
-                  <div className="ph-kpi-icon ic-blue">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="2" y="5" width="20" height="14" rx="2" />
-                      <line x1="2" y1="10" x2="22" y2="10" />
-                    </svg>
+                  <div className="ph-kpi-sub" style={{ color: '#64748B' }}>
+                    <span style={{ color: '#16A34A', fontWeight: 700 }}>▲ {kpis.successful_count} done</span>
+                    <span>•</span>
+                    <span style={{ color: '#F59E0B', fontWeight: 600 }}>{kpis.pending_count} pending</span>
                   </div>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
 import Sidebar from '@/components/Sidebar';
@@ -1211,6 +1211,35 @@ const PHOTO_ANGLES = [
   { id: 'Battery Bay', label: 'Battery Bay', hint: 'Serial & Terminals' },
 ];
 
+export const INSPECTION_CRITERIA_LIST = [
+  { id: 1, item: 'Vehicle Functionality', criteria: 'Vehicle starts and operates properly; no abnormal functioning' },
+  { id: 2, item: 'Physical Condition', criteria: 'No cracks, dents, breakage or physical damage' },
+  { id: 3, item: 'Spare Parts / Accessories', criteria: 'All assigned spare parts and accessories are available' },
+  { id: 4, item: 'Overall Vehicle Condition', criteria: 'No abnormal condition, loose components or visible defects' },
+  { id: 5, item: 'Colour / Paint Condition', criteria: 'No major scratches, paint damage, colour fading or damage' },
+  { id: 6, item: 'Wheel Condition', criteria: 'Wheels/rims free from damage, bending or abnormal looseness' },
+  { id: 7, item: 'Tyre Condition', criteria: 'Tyre pressure satisfactory; no cuts, punctures or excessive wear' },
+  { id: 8, item: 'Brake Condition', criteria: 'Front and rear brakes operate properly and effectively' },
+  { id: 9, item: 'Brake Components', criteria: 'Brake pads/shoes, levers, cables and related components in good condition' },
+  { id: 10, item: 'Throttle Condition', criteria: 'Smooth operation with automatic return to original position' },
+  { id: 11, item: 'Seat Condition', criteria: 'Seat secure and free from cuts, tears or damage' },
+  { id: 12, item: 'Front Light Condition', criteria: 'Headlight working properly' },
+  { id: 13, item: 'Tail Light Condition', criteria: 'Tail light and rear visibility light working properly' },
+  { id: 14, item: 'Side Light / Indicator Condition', criteria: 'Side lights and turn indicators working properly, if fitted' },
+  { id: 15, item: 'Suspension Condition', criteria: 'No leakage, damage or abnormal noise' },
+  { id: 16, item: 'Nut & Bolt Tightness', criteria: 'All accessible nuts, bolts and fasteners are secure' },
+  { id: 17, item: 'Steering Condition', criteria: 'Smooth movement; no looseness, abnormal play or damage' },
+  { id: 18, item: 'Horn Condition', criteria: 'Horn working properly' },
+  { id: 19, item: 'Charging Socket Condition', criteria: 'Socket free from damage, overheating or loose connections' },
+  { id: 20, item: 'Electrical Wiring Condition', criteria: 'No exposed, loose, cut or damaged wiring' },
+  { id: 21, item: 'Display Condition', criteria: 'Display working properly; no abnormal error or warning indication' },
+  { id: 22, item: 'Stand Condition', criteria: 'Side/centre stand secure and functioning properly' },
+  { id: 23, item: 'Name Plate Condition', criteria: 'Name plate present, readable and securely mounted' },
+  { id: 24, item: 'Sticker / Branding Condition', criteria: 'Stickers and branding present, readable and not torn, damaged or removed' },
+  { id: 25, item: 'Vehicle Cleaning Condition', criteria: 'Vehicle properly cleaned and free from excessive dirt/mud' },
+  { id: 26, item: 'Scooter Overall Assessment', criteria: 'Overall vehicle condition assessed and suitable for next deployment, or marked for maintenance' }
+];
+
 interface ReturnVehiclePageProps {
   initialTab?: 'return' | 'extend' | 'exchange';
 }
@@ -1238,6 +1267,33 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
   const [helmetReturned, setHelmetReturned] = useState(true);
   const [chargerReturned, setChargerReturned] = useState(true);
   const [inspectionNotes, setInspectionNotes] = useState('');
+
+  // 26-Point Inspection & Assessment States (Image 2)
+  const [inspectionItemsState, setInspectionItemsState] = useState<Record<number, {
+    response: 'Pass' | 'Fail';
+    penalty: number;
+    remarks: string;
+    photoRef: string;
+  }>>(() => {
+    const init: any = {};
+    INSPECTION_CRITERIA_LIST.forEach(it => {
+      init[it.id] = { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
+    });
+    return init;
+  });
+
+  const [selectedInspectionId, setSelectedInspectionId] = useState<number>(1);
+  const [finalVehicleStatus, setFinalVehicleStatus] = useState<'Available for Next Ride' | 'Maintenance Required' | 'On Hold' | 'Accident Review'>('Available for Next Ride');
+  const [maintenanceRequired, setMaintenanceRequired] = useState<'Yes' | 'No'>('No');
+  const [maintenancePriority, setMaintenancePriority] = useState<'Low' | 'Medium' | 'High' | 'Critical'>('Medium');
+  const [assignedTechnician, setAssignedTechnician] = useState('Rajesh Kumar (Central Workshop)');
+  const [finalRemarks, setFinalRemarks] = useState('');
+  const [inspectorConfirmed, setInspectorConfirmed] = useState(true);
+  const [inspectorName, setInspectorName] = useState('Speed Force (Zone Admin)');
+
+  const total26Penalty = useMemo(() => {
+    return Object.values(inspectionItemsState).reduce((acc, curr) => acc + (Number(curr.penalty) || 0), 0);
+  }, [inspectionItemsState]);
 
   // Super Admin Approval Queue States (Step 3)
   const [approvalPriority, setApprovalPriority] = useState<'standard' | 'urgent'>('standard');
@@ -1463,8 +1519,8 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
     return (matchesQ && matchesZone) || (q.length > 0 && matchesQ);
   });
 
-  // Calculate return deductions & refund
-  let deductions = 0;
+  // Calculate return deductions & refund (incorporating 26-item checklist assessment)
+  let deductions = total26Penalty;
   if (bodyDmg === 'minor') deductions += 250;
   if (bodyDmg === 'major') deductions += 500;
   if (tyreCond === 'worn') deductions += 150;
@@ -1486,6 +1542,14 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
     setBatteryHealth('good');
     setHelmetReturned(true);
     setChargerReturned(true);
+    const clean26: any = {};
+    INSPECTION_CRITERIA_LIST.forEach(it => {
+      clean26[it.id] = { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
+    });
+    setInspectionItemsState(clean26);
+    setFinalVehicleStatus('Available for Next Ride');
+    setMaintenanceRequired('No');
+    setFinalRemarks('');
   };
 
   // Calculate extension fare based on live zone pricing
@@ -1603,18 +1667,38 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
   const handleCompleteReturn = async () => {
     setLoading(true);
     try {
+      const checklistPayload = INSPECTION_CRITERIA_LIST.map(it => ({
+        sr_no: it.id,
+        item: it.item,
+        criteria: it.criteria,
+        response: inspectionItemsState[it.id]?.response || 'Pass',
+        penalty: Number(inspectionItemsState[it.id]?.penalty) || 0,
+        remarks: inspectionItemsState[it.id]?.remarks || '',
+        photo_ref: inspectionItemsState[it.id]?.photoRef || ''
+      }));
+
       await api.post('/rides/return', {
         rider_name: selectedRider?.name,
         mobile: selectedRider?.mobile,
         vehicle_id: selectedRider?.vehicle_id,
-        return_condition: bodyDmg,
+        return_condition: finalVehicleStatus,
         refund_deposit: netRefund,
         refund_status: 'PENDING_ADMIN_APPROVAL',
         approval_ticket_id: approvalTicketId,
         approval_priority: approvalPriority,
-        notes: inspectionNotes,
+        notes: finalRemarks || inspectionNotes,
         inspection_photos: inspectionPhotos,
-        payu_tx_id: extraDue > 0 ? payuTxId : undefined
+        payu_tx_id: extraDue > 0 ? payuTxId : undefined,
+        // 26-point inspection & assessment payload
+        inspection_items: checklistPayload,
+        total_penalty: total26Penalty,
+        damage_cost: total26Penalty,
+        final_vehicle_status: finalVehicleStatus,
+        maintenance_required: maintenanceRequired,
+        maintenance_priority: maintenancePriority,
+        assigned_technician: assignedTechnician,
+        final_remarks: finalRemarks,
+        inspector_name: inspectorName
       });
 
       if (extraDue > 0 && payuTxId) {
@@ -2322,10 +2406,391 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
                               </div>
                             </div>
 
-                            {/* SECTION 4: Remarks */}
+                            {/* SECTION 4: Comprehensive 26-Point Inspection & Penalty Assessment (Excel Specification) */}
+                            <div className="chk-section-hdr" style={{ marginTop: '24px' }}>
+                              <div className="chk-section-title">
+                                📋 4. E-Scooter Vehicle Return Inspection &amp; Penalty Assessment (26-Point Criteria)
+                              </div>
+                              <span className="chk-step-pill" style={{ background: total26Penalty > 0 ? '#FEE2E2' : '#DCFCE7', color: total26Penalty > 0 ? '#DC2626' : '#15803D' }}>
+                                Total Assessment Penalty: ₹{total26Penalty.toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* Dropdown Quick Item Selector */}
+                            <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
+                                <div style={{ minWidth: 260, flex: 1 }}>
+                                  <label style={{ fontSize: '12px', fontWeight: 700, color: '#334155', display: 'block', marginBottom: '4px' }}>
+                                    Select Inspection Item to Inspect / Apply Defect Penalty:
+                                  </label>
+                                  <select 
+                                    className="rh-select"
+                                    value={selectedInspectionId}
+                                    onChange={(e) => setSelectedInspectionId(Number(e.target.value))}
+                                    style={{ height: '38px', fontSize: '12.5px', background: '#FFF' }}
+                                  >
+                                    {INSPECTION_CRITERIA_LIST.map(it => (
+                                      <option key={it.id} value={it.id}>
+                                        #{it.id} {it.item} {inspectionItemsState[it.id]?.penalty > 0 ? `(⚠️ Penalty ₹${inspectionItemsState[it.id].penalty})` : ''}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                                
+                                {(() => {
+                                  const cur = inspectionItemsState[selectedInspectionId] || { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
+                                  return (
+                                    <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                      <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Response</label>
+                                        <select
+                                          value={cur.response}
+                                          onChange={(e) => {
+                                            const resp = e.target.value as any;
+                                            setInspectionItemsState(prev => ({
+                                              ...prev,
+                                              [selectedInspectionId]: {
+                                                ...prev[selectedInspectionId],
+                                                response: resp,
+                                                penalty: resp === 'Pass' ? 0 : (prev[selectedInspectionId]?.penalty || 200)
+                                              }
+                                            }));
+                                          }}
+                                          style={{ padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+                                        >
+                                          <option value="Pass">Pass / OK</option>
+                                          <option value="Fail">Fail / Defect</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Penalty (₹)</label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={cur.penalty}
+                                          onChange={(e) => {
+                                            const pVal = Math.max(0, Number(e.target.value));
+                                            setInspectionItemsState(prev => ({
+                                              ...prev,
+                                              [selectedInspectionId]: {
+                                                ...prev[selectedInspectionId],
+                                                penalty: pVal,
+                                                response: pVal > 0 ? 'Fail' : prev[selectedInspectionId]?.response
+                                              }
+                                            }));
+                                          }}
+                                          style={{ width: '90px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 800 }}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Defect Remarks</label>
+                                        <input
+                                          type="text"
+                                          placeholder="e.g. Scratched mirror or dent..."
+                                          value={cur.remarks}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setInspectionItemsState(prev => ({
+                                              ...prev,
+                                              [selectedInspectionId]: { ...prev[selectedInspectionId], remarks: val }
+                                            }));
+                                          }}
+                                          style={{ width: '200px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px' }}
+                                        />
+                                      </div>
+                                      <div>
+                                        <label style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '2px' }}>Evidence / Photo Ref</label>
+                                        <input
+                                          type="text"
+                                          placeholder="e.g. Angle Photo #2"
+                                          value={cur.photoRef}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setInspectionItemsState(prev => ({
+                                              ...prev,
+                                              [selectedInspectionId]: { ...prev[selectedInspectionId], photoRef: val }
+                                            }));
+                                          }}
+                                          style={{ width: '140px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px' }}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* Full 26-Item Inspection Table */}
+                            <div style={{ overflowX: 'auto', border: '1.5px solid #CBD5E1', borderRadius: '12px', marginBottom: '18px', background: '#FFF' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                                <thead>
+                                  <tr style={{ background: '#1E3A8A', color: '#FFF' }}>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '50px' }}>Sr. No.</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '150px' }}>Inspection Item</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '220px' }}>Inspection Criteria</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '90px' }}>Response</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', width: '100px' }}>Penalty (₹)</th>
+                                    <th style={{ padding: '10px 12px', borderRight: '1px solid #3B82F6', minWidth: '180px' }}>Remarks / Defect Details</th>
+                                    <th style={{ padding: '10px 12px', minWidth: '130px' }}>Photo / Evidence Ref.</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {INSPECTION_CRITERIA_LIST.map((it, idx) => {
+                                    const itemData = inspectionItemsState[it.id] || { response: 'Pass', penalty: 0, remarks: '', photoRef: '' };
+                                    const hasPenalty = (itemData.penalty || 0) > 0;
+                                    const isSelected = selectedInspectionId === it.id;
+
+                                    return (
+                                      <tr 
+                                        key={it.id} 
+                                        style={{ 
+                                          background: hasPenalty ? '#FEF2F2' : (isSelected ? '#EFF6FF' : (idx % 2 === 0 ? '#FFF' : '#F8FAFC')),
+                                          borderBottom: '1px solid #E2E8F0',
+                                          cursor: 'pointer'
+                                        }}
+                                        onClick={() => setSelectedInspectionId(it.id)}
+                                      >
+                                        <td style={{ padding: '8px 12px', fontWeight: 700, color: '#475569', textAlign: 'center' }}>
+                                          {it.id}
+                                        </td>
+                                        <td style={{ padding: '8px 12px', fontWeight: 700, color: '#0F172A' }}>
+                                          {it.item}
+                                        </td>
+                                        <td style={{ padding: '8px 12px', color: '#475569', fontSize: '11.5px' }}>
+                                          {it.criteria}
+                                        </td>
+                                        <td style={{ padding: '8px 12px' }}>
+                                          <select
+                                            value={itemData.response}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const resp = e.target.value as any;
+                                              setInspectionItemsState(prev => ({
+                                                ...prev,
+                                                [it.id]: {
+                                                  ...prev[it.id],
+                                                  response: resp,
+                                                  penalty: resp === 'Pass' ? 0 : (prev[it.id]?.penalty || 150)
+                                                }
+                                              }));
+                                            }}
+                                            style={{
+                                              padding: '4px 6px',
+                                              borderRadius: '6px',
+                                              border: '1px solid #CBD5E1',
+                                              fontSize: '11px',
+                                              fontWeight: 700,
+                                              color: itemData.response === 'Pass' ? '#15803D' : '#DC2626',
+                                              background: itemData.response === 'Pass' ? '#F0FDF4' : '#FEF2F2'
+                                            }}
+                                          >
+                                            <option value="Pass">Pass</option>
+                                            <option value="Fail">Fail</option>
+                                          </select>
+                                        </td>
+                                        <td style={{ padding: '8px 12px' }}>
+                                          <input
+                                            type="number"
+                                            min={0}
+                                            value={itemData.penalty}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const pVal = Math.max(0, Number(e.target.value));
+                                              setInspectionItemsState(prev => ({
+                                                ...prev,
+                                                [it.id]: {
+                                                  ...prev[it.id],
+                                                  penalty: pVal,
+                                                  response: pVal > 0 ? 'Fail' : prev[it.id]?.response
+                                                }
+                                              }));
+                                              if (pVal > 0) {
+                                                setMaintenanceRequired('Yes');
+                                                setFinalVehicleStatus('Maintenance Required');
+                                              }
+                                            }}
+                                            style={{
+                                              width: '80px',
+                                              padding: '4px 8px',
+                                              borderRadius: '6px',
+                                              border: '1px solid #CBD5E1',
+                                              fontSize: '12px',
+                                              fontWeight: 800,
+                                              color: hasPenalty ? '#DC2626' : '#334155'
+                                            }}
+                                          />
+                                        </td>
+                                        <td style={{ padding: '8px 12px' }}>
+                                          <input
+                                            type="text"
+                                            placeholder="Remarks..."
+                                            value={itemData.remarks}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setInspectionItemsState(prev => ({
+                                                ...prev,
+                                                [it.id]: { ...prev[it.id], remarks: val }
+                                              }));
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              padding: '4px 8px',
+                                              borderRadius: '6px',
+                                              border: '1px solid #E2E8F0',
+                                              fontSize: '11.5px'
+                                            }}
+                                          />
+                                        </td>
+                                        <td style={{ padding: '8px 12px' }}>
+                                          <input
+                                            type="text"
+                                            placeholder="Photo ref..."
+                                            value={itemData.photoRef}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const val = e.target.value;
+                                              setInspectionItemsState(prev => ({
+                                                ...prev,
+                                                [it.id]: { ...prev[it.id], photoRef: val }
+                                              }));
+                                            }}
+                                            style={{
+                                              width: '100%',
+                                              padding: '4px 8px',
+                                              borderRadius: '6px',
+                                              border: '1px solid #E2E8F0',
+                                              fontSize: '11.5px'
+                                            }}
+                                          />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+
+                                  {/* TOTAL PENALTY Row */}
+                                  <tr style={{ background: '#1E3A8A', color: '#FFF', fontWeight: 800, fontSize: '13px' }}>
+                                    <td colSpan={4} style={{ padding: '12px 16px', textAlign: 'right', letterSpacing: '0.05em' }}>
+                                      TOTAL PENALTY
+                                    </td>
+                                    <td colSpan={3} style={{ padding: '12px 16px', fontSize: '15px', color: '#FEF08A' }}>
+                                      ₹{total26Penalty.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Final Assessment Summary Box (Image 2) */}
+                            <div style={{ background: '#F8FAFC', border: '1.5px solid #CBD5E1', borderRadius: '12px', padding: '16px 20px', marginBottom: '20px' }}>
+                              <h4 style={{ margin: '0 0 12px', fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
+                                Final Vehicle Assessment &amp; Routing
+                              </h4>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    Final Vehicle Status
+                                  </label>
+                                  <select
+                                    value={finalVehicleStatus}
+                                    onChange={(e) => setFinalVehicleStatus(e.target.value as any)}
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+                                  >
+                                    <option value="Available for Next Ride">Available for Next Ride</option>
+                                    <option value="Maintenance Required">Maintenance Required</option>
+                                    <option value="On Hold">On Hold</option>
+                                    <option value="Accident Review">Accident Review</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    Maintenance Required
+                                  </label>
+                                  <select
+                                    value={maintenanceRequired}
+                                    onChange={(e) => {
+                                      const v = e.target.value as any;
+                                      setMaintenanceRequired(v);
+                                      if (v === 'Yes') setFinalVehicleStatus('Maintenance Required');
+                                    }}
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+                                  >
+                                    <option value="No">No</option>
+                                    <option value="Yes">Yes</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    Maintenance Priority
+                                  </label>
+                                  <select
+                                    value={maintenancePriority}
+                                    onChange={(e) => setMaintenancePriority(e.target.value as any)}
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+                                  >
+                                    <option value="Low">Low</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="High">High</option>
+                                    <option value="Critical">Critical</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                    Assigned Technician
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={assignedTechnician}
+                                    onChange={(e) => setAssignedTechnician(e.target.value)}
+                                    placeholder="Technician name..."
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px' }}
+                                  />
+                                </div>
+                              </div>
+
+                              <div style={{ marginBottom: '14px' }}>
+                                <label style={{ display: 'block', fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '4px' }}>
+                                  Final Remarks
+                                </label>
+                                <textarea
+                                  value={finalRemarks}
+                                  onChange={(e) => setFinalRemarks(e.target.value)}
+                                  placeholder="Enter comprehensive return remarks, defect causes, or technician notes..."
+                                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', minHeight: '60px', resize: 'vertical' }}
+                                />
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', paddingTop: '10px', borderTop: '1px solid #E2E8F0' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', fontWeight: 700, color: '#1E293B', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={inspectorConfirmed}
+                                    onChange={(e) => setInspectorConfirmed(e.target.checked)}
+                                    style={{ width: '16px', height: '16px', accentColor: '#1E3A8A' }}
+                                  />
+                                  I confirm that this inspection has been completed.
+                                </label>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#64748B' }}>Inspector Name:</span>
+                                  <input
+                                    type="text"
+                                    value={inspectorName}
+                                    onChange={(e) => setInspectorName(e.target.value)}
+                                    style={{ padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '12px', fontWeight: 700 }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* SECTION 5: Remarks */}
                             <div>
                               <label style={{ display: 'block', fontSize: 12.5, fontWeight: 800, color: '#0F172A', marginBottom: 6 }}>
-                                4. Hub Inspector Remarks (Optional)
+                                5. Hub Inspector Additional Notes (Optional)
                               </label>
                               <textarea
                                 placeholder="E.g., Vehicle returned in good operational condition. Odometer reading 1,420 km."
@@ -2443,6 +2908,19 @@ export default function ReturnVehiclePage({ initialTab }: ReturnVehiclePageProps
                                     {(!helmetReturned || !chargerReturned)
                                       ? `-₹${((!helmetReturned ? 300 : 0) + (!chargerReturned ? 200 : 0)).toFixed(2)}`
                                       : '₹0.00'}
+                                  </span>
+                                </div>
+
+                                <div className="ro-settle-row">
+                                  <span className="ro-settle-label">26-Point Inspection Penalties</span>
+                                  <span className="ro-settle-val" style={{ color: total26Penalty > 0 ? '#DC2626' : '#16A34A' }}>
+                                    {total26Penalty > 0 ? `-₹${total26Penalty.toFixed(2)}` : '₹0.00'}
+                                  </span>
+                                </div>
+                                <div className="ro-settle-row">
+                                  <span className="ro-settle-label">Post-Return Routing Status</span>
+                                  <span className="ro-settle-val" style={{ color: finalVehicleStatus === 'Available for Next Ride' ? '#16A34A' : '#DC2626', fontWeight: 800 }}>
+                                    {finalVehicleStatus}
                                   </span>
                                 </div>
 

@@ -1351,12 +1351,16 @@ router.post('/:id/refund-deposit', async (req, res) => {
     refund_amount,
     deductions = 0,
     notes = '',
-    method
+    method,
+    refund_mode
   } = req.body;
 
   const refundAmt = parseFloat(refund_amount || 0);
   const dedAmt = parseFloat(deductions || 0);
-  const refTxId = `REF-${Date.now().toString().slice(-8)}`;
+  const chosenMode = refund_mode || method || 'PayU';
+  const isCash = chosenMode.toLowerCase().includes('cash');
+  const isUpi = chosenMode.toLowerCase().includes('upi') || chosenMode.toLowerCase().includes('qr');
+  const refTxId = isCash ? `CSH-REF-${Date.now().toString().slice(-8)}` : (isUpi ? `UPI-REF-${Date.now().toString().slice(-8)}` : `REF-${Date.now().toString().slice(-8)}`);
 
   try {
     let target = null;
@@ -1392,7 +1396,7 @@ router.post('/:id/refund-deposit', async (req, res) => {
     const payuRouter = require('./payu');
     let payuResult = null;
 
-    if (refundAmt > 0) {
+    if (refundAmt > 0 && !isCash && !isUpi) {
       try {
         payuResult = await payuRouter.processPayURefund({
           payuId: target.transaction_id || target.payu_id || '',
@@ -1410,7 +1414,7 @@ router.post('/:id/refund-deposit', async (req, res) => {
     const finalRefundTxId = (payuResult && payuResult.success)
       ? (payuResult.payu_request_id || payuResult.refund_tx_id || refTxId)
       : refTxId;
-    const resolvedMethod = method || ((payuResult && payuResult.success) ? 'PayU' : (target.payment_mode || 'PayU'));
+    const resolvedMethod = isCash ? 'Cash' : (isUpi ? 'Rider QR / UPI' : ((payuResult && payuResult.success) ? 'PayU' : (target.payment_mode || 'PayU')));
 
     try {
       const updRes = await db.query(`

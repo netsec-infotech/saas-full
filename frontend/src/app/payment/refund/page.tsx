@@ -974,41 +974,71 @@ export default function DepositRefundPage() {
               </div>
 
               <div className="modal-input-wrap">
-                <label className="modal-lbl">Refund Payment Gateway</label>
+                <label className="modal-lbl">Refund Disbursement Method</label>
+                <select 
+                  className="modal-input" 
+                  value={refundMethod} 
+                  onChange={(e) => setRefundMethod(e.target.value)}
+                  style={{ fontWeight: 700, cursor: 'pointer' }}
+                >
+                  <option value="Cash">💵 Cash (Counter Cash Desk)</option>
+                  <option value="Rider QR / UPI">📱 Rider QR Code / UPI (Direct Payout)</option>
+                  <option value="PayU">💳 Direct PayU Integration (Live Gateway Reversal)</option>
+                </select>
+              </div>
+
+              {refundMethod === 'Rider QR / UPI' && (
+                <div className="modal-input-wrap">
+                  <label className="modal-lbl">Rider VPA / UPI ID or Bank Account Details</label>
+                  <input 
+                    type="text" 
+                    className="modal-input" 
+                    placeholder="e.g. mobile@upi, 9825544332@icici, or scan QR"
+                    value={upiId}
+                    onChange={(e) => setUpiId(e.target.value)}
+                  />
+                  <span style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
+                    Record rider's UPI VPA or account for electronic fund transfer tracking.
+                  </span>
+                </div>
+              )}
+
+              {refundMethod === 'Cash' && (
+                <div className="modal-input-wrap">
+                  <label className="modal-lbl">Cash Disbursement Desk / Voucher Reference</label>
+                  <input 
+                    type="text" 
+                    className="modal-input" 
+                    placeholder="e.g. Counter Cash Voucher #0042 or Handover to Rider"
+                    value={upiId}
+                    onChange={(e) => setUpiId(e.target.value)}
+                  />
+                  <span style={{ fontSize: '11px', color: '#16A34A', fontWeight: 600, marginTop: '2px' }}>
+                    Cash disbursed directly from Zone Cash Drawer upon security authorization.
+                  </span>
+                </div>
+              )}
+
+              {refundMethod === 'PayU' && (
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '10px',
                   padding: '10px 14px',
-                  background: '#F8FAFC',
-                  border: '1.5px solid #CBD5E1',
+                  background: '#F0FDF4',
+                  border: '1.5px solid #86EFAC',
                   borderRadius: '10px',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  color: '#1E293B'
+                  fontWeight: 600,
+                  fontSize: '12px',
+                  color: '#166534',
+                  marginBottom: '10px'
                 }}>
-                  <span style={{
-                    background: '#528900',
-                    color: '#FFF',
-                    padding: '2px 8px',
-                    borderRadius: '6px',
-                    fontSize: '11px',
-                    fontWeight: 800
-                  }}>PayU</span>
-                  <span>PayU(Live Refund Flow)</span>
+                  <span style={{ background: '#528900', color: '#FFF', padding: '2px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800 }}>
+                    PayU
+                  </span>
+                  <span>Direct API auto-refund to original online payment instrument.</span>
                 </div>
-              </div>
-
-              <div className="modal-input-wrap">
-                <label className="modal-lbl">Rider VPA / UPI ID or Bank Details</label>
-                <input 
-                  type="text" 
-                  className="modal-input" 
-                  placeholder="e.g. mobile@upi or 9825544332@icici"
-                  value={upiId}
-                  onChange={(e) => setUpiId(e.target.value)}
-                />
-              </div>
+              )}
 
               <div className="modal-input-wrap">
                 <label className="modal-lbl">Remarks / Inspection Notes (Optional)</label>

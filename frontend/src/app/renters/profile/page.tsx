@@ -1372,6 +1372,14 @@ function RiderProfileContent() {
     });
   }, [profileData, riderRides, riderStatusParam]);
 
+  // Exclude abandoned/user-dropped checkouts from wallet and earnings calculations
+  const validWalletTxs = useMemo(() => {
+    return userWalletTxs.filter((tx: any) => {
+      const st = String(tx.status || '').toLowerCase();
+      return !st.includes('drop') && st !== 'failed';
+    });
+  }, [userWalletTxs]);
+
   // Build daily earnings map from wallet transactions + rides
   const dailyEarnings = useMemo(() => {
     const map: Record<string, { date: string; earnings: number; rides: number; distance: number; co2: number }> = {};
@@ -1394,7 +1402,9 @@ function RiderProfileContent() {
       };
     }
 
-    userWalletTxs.forEach((tx: any) => {
+    validWalletTxs.forEach((tx: any) => {
+      const st = String(tx.status || '').toLowerCase();
+      if (!['success', 'successful', 'completed'].includes(st)) return;
       const raw = tx.created_at || tx.date || tx.timestamp;
       if (!raw) return;
       try {
@@ -1447,7 +1457,7 @@ function RiderProfileContent() {
     }
 
     return sorted;
-  }, [userWalletTxs, riderRides, earningsPeriod]);
+  }, [validWalletTxs, riderRides, earningsPeriod]);
 
   const earningsSummary = useMemo(() => {
     let total = 0, credit = 0, debit = 0, count = 0;
@@ -1463,7 +1473,9 @@ function RiderProfileContent() {
     const cutoffDate = new Date(today);
     cutoffDate.setDate(cutoffDate.getDate() - cutoff);
 
-    userWalletTxs.forEach((tx: any) => {
+    validWalletTxs.forEach((tx: any) => {
+      const st = String(tx.status || '').toLowerCase();
+      if (!['success', 'successful', 'completed'].includes(st)) return;
       const raw = tx.created_at || tx.date || tx.timestamp;
       if (!raw) return;
       try {
@@ -1501,7 +1513,7 @@ function RiderProfileContent() {
       net: credit - debit,
       txCount: count
     };
-  }, [userWalletTxs, riderRides, earningsPeriod]);
+  }, [validWalletTxs, riderRides, earningsPeriod]);
 
   const perfSummary = useMemo(() => {
     const totalRides = riderRides.length;
@@ -1614,7 +1626,9 @@ function RiderProfileContent() {
 
   const walletFlowData = useMemo(() => {
     let credit = 0, debit = 0;
-    userWalletTxs.forEach((tx: any) => {
+    validWalletTxs.forEach((tx: any) => {
+      const st = String(tx.status || '').toLowerCase();
+      if (!['success', 'successful', 'completed'].includes(st)) return;
       const amt = Math.abs(Number(tx.amount) || 0);
       if (tx.type === 'Credit') credit += amt;
       else if (tx.type === 'Debit') debit += amt;
@@ -1629,7 +1643,7 @@ function RiderProfileContent() {
         hoverOffset: 6
       }]
     };
-  }, [userWalletTxs]);
+  }, [validWalletTxs]);
 
   const filteredIncidents = useMemo(() => {
     return incidents.filter(i => {
@@ -1646,8 +1660,8 @@ function RiderProfileContent() {
 
   const paginatedTxs = useMemo(() => {
     const start = (earningsPage - 1) * 8;
-    return userWalletTxs.slice(start, start + 8);
-  }, [userWalletTxs, earningsPage]);
+    return validWalletTxs.slice(start, start + 8);
+  }, [validWalletTxs, earningsPage]);
 
   // ═══════════════ ACTIONS ═══════════════
 
@@ -2618,7 +2632,7 @@ function RiderProfileContent() {
                         </tr>
                       </thead>
                       <tbody>
-                        {userWalletTxs.length === 0 ? (
+                        {validWalletTxs.length === 0 ? (
                           <tr>
                             <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: 'var(--ink-faint)' }}>
                               No transactions found. Rides or top-ups will appear here.
@@ -2674,15 +2688,15 @@ function RiderProfileContent() {
                       </tbody>
                     </table>
                   </div>
-                  {userWalletTxs.length > 8 && (
+                  {validWalletTxs.length > 8 && (
                     <div className="rp-footer-bar">
-                      <span>Showing {(earningsPage - 1) * 8 + 1} to {Math.min(earningsPage * 8, userWalletTxs.length)} of {userWalletTxs.length}</span>
+                      <span>Showing {(earningsPage - 1) * 8 + 1} to {Math.min(earningsPage * 8, validWalletTxs.length)} of {validWalletTxs.length}</span>
                       <div className="rp-pagination">
                         <button className="rp-pg-btn" disabled={earningsPage === 1} onClick={() => setEarningsPage(p => p - 1)}>&lt;</button>
-                        {Array.from({ length: Math.ceil(userWalletTxs.length / 8) }).map((_, i) => (
+                        {Array.from({ length: Math.ceil(validWalletTxs.length / 8) }).map((_, i) => (
                           <button key={i} className={`rp-pg-btn ${earningsPage === (i + 1) ? 'active' : ''}`} onClick={() => setEarningsPage(i + 1)}>{i + 1}</button>
                         ))}
-                        <button className="rp-pg-btn" disabled={earningsPage === Math.ceil(userWalletTxs.length / 8)} onClick={() => setEarningsPage(p => p + 1)}>&gt;</button>
+                        <button className="rp-pg-btn" disabled={earningsPage === Math.ceil(validWalletTxs.length / 8)} onClick={() => setEarningsPage(p => p + 1)}>&gt;</button>
                       </div>
                     </div>
                   )}

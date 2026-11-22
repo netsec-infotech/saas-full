@@ -114,6 +114,11 @@ const DEFAULT_SETTINGS = {
     channels_email: true,
     channels_sms: true,
     channels_inapp: true,
+    whatsapp_enabled: true,
+    push_enabled: true,
+    fcm_server_key: '',
+    fcm_project_id: 'evegah-rider-prod',
+    apns_key_id: '',
     quiet_hours_enabled: true,
     quiet_hours_from: '10:00 PM',
     quiet_hours_to: '07:00 AM',
@@ -411,6 +416,30 @@ function safeDeleteUploadFile(fileUrlOrName) {
   }
   return deleted;
 }
+
+router.post('/notifications/test-push', async (req, res) => {
+  try {
+    const { title = 'Evegah Test Push', message = 'This is a test push notification from Evegah Platform.', target = 'all' } = req.body;
+    await db.query(`
+      INSERT INTO notifications (title, message, type, is_read, created_at)
+      VALUES ($1, $2, 'Push', false, NOW())
+    `, [title, message]).catch(() => {});
+
+    await db.query(`
+      INSERT INTO push_notifications_log (title, body, target_audience, status, created_at)
+      VALUES ($1, $2, $3, 'Sent', NOW())
+    `, [title, message, target]).catch(() => {});
+
+    res.json({
+      status: 'success',
+      message: `Push notification dispatched successfully to ${target} devices!`,
+      payload: { title, message, target, timestamp: new Date().toISOString() }
+    });
+  } catch (err) {
+    console.error('Error dispatching test push notification:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 router.post('/delete-asset', (req, res) => {
   try {

@@ -135,7 +135,9 @@ router.get('/', async (req, res) => {
           pp.created_at
         FROM payu_payments pp
         LEFT JOIN reservations r ON (r.transaction_id = pp.tx_id OR r.reservation_id = pp.reservation_id)
-        WHERE pp.status NOT IN ('Refund_Failed', 'Refunded')
+        WHERE UPPER(pp.status) = 'SUCCESS'
+          AND pp.status NOT IN ('Refund_Failed', 'Refunded', 'User Dropped', 'DROPPED', 'Dropped', 'Failed')
+          AND COALESCE(pp.error_message, '') NOT ILIKE '%dropped%'
           AND pp.purpose NOT ILIKE '%refund%'
           AND pp.tx_id NOT LIKE 'REF-%'
           AND pp.mobile NOT LIKE '%1800%'
@@ -817,7 +819,9 @@ router.get('/export', async (req, res) => {
           pp.created_at
         FROM payu_payments pp
         LEFT JOIN reservations r ON (r.transaction_id = pp.tx_id OR r.reservation_id = pp.reservation_id)
-        WHERE pp.status NOT IN ('Refund_Failed', 'Refunded')
+        WHERE UPPER(pp.status) = 'SUCCESS'
+          AND pp.status NOT IN ('Refund_Failed', 'Refunded', 'User Dropped', 'DROPPED', 'Dropped', 'Failed')
+          AND COALESCE(pp.error_message, '') NOT ILIKE '%dropped%'
           AND pp.purpose NOT ILIKE '%refund%'
           AND pp.tx_id NOT LIKE 'REF-%'
           AND pp.mobile NOT LIKE '%1800%'

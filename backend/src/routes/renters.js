@@ -764,6 +764,7 @@ router.get('/profile', async (req, res) => {
             pp.created_at
           FROM payu_payments pp
           WHERE pp.mobile LIKE $1
+            AND UPPER(pp.status) = 'SUCCESS'
 
           UNION ALL
 

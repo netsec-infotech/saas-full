@@ -480,16 +480,30 @@ router.post('/return', async (req, res) => {
       notes,
       damage_detected,
       damage_cost,
-      damage_category
+      damage_category,
+      // 26-Item Inspection & Assessment fields
+      inspection_items,
+      total_penalty,
+      final_vehicle_status,
+      maintenance_required,
+      maintenance_priority,
+      assigned_technician,
+      final_remarks,
+      inspector_name
     } = req.body;
     const cleanMob = (mobile || '').replace(/\D/g, '').slice(-10);
 
+    const calculatedPenalty = parseFloat(total_penalty !== undefined ? total_penalty : damage_cost) || 0;
+    const needsMaintenance = maintenance_required === 'Yes' || final_vehicle_status === 'Maintenance Required';
     const isDamaged = Boolean(
+      needsMaintenance ||
+      calculatedPenalty > 0 ||
       damage_detected === true ||
       parseFloat(damage_cost) > 0 ||
       ['minor', 'major', 'damaged', 'dirty', 'issue'].includes(String(return_condition || '').toLowerCase()) ||
       String(return_condition || '').toLowerCase().includes('damage') ||
-      String(notes || '').toLowerCase().includes('damage')
+      String(notes || '').toLowerCase().includes('damage') ||
+      String(final_remarks || '').toLowerCase().includes('damage')
     );
 
     try {
@@ -499,9 +513,21 @@ router.post('/return', async (req, res) => {
         WHERE (mobile LIKE $1 AND mobile != '') OR vehicle_id = $2
       `, [`%${cleanMob}%`, vehicle_id]);
 
-      // If vehicle has damage, route to Maintenance; else return to Available
+      // Route vehicle status in PostgreSQL according to final assessment
       if (vehicle_id) {
-        if (isDamaged) {
+        if (final_vehicle_status === 'On Hold') {
+          await db.query(`
+            UPDATE vehicles 
+            SET vehicle_status = 'On Hold', renter_name = 'On Hold (Inspection Pending)' 
+            WHERE code = $1 OR registration_number = $1
+          `, [vehicle_id]);
+        } else if (final_vehicle_status === 'Accident Review') {
+          await db.query(`
+            UPDATE vehicles 
+            SET vehicle_status = 'Accident Review', renter_name = 'Accident Investigation Review' 
+            WHERE code = $1 OR registration_number = $1
+          `, [vehicle_id]);
+        } else if (needsMaintenance || isDamaged) {
           await db.query(`
             UPDATE vehicles 
             SET vehicle_status = 'Maintenance', renter_name = 'Maintenance Required' 
@@ -509,19 +535,21 @@ router.post('/return', async (req, res) => {
           `, [vehicle_id]);
 
           const ticketId = `MAIN-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
-          const estCost = parseFloat(damage_cost) || 600.00;
+          const estCost = calculatedPenalty > 0 ? calculatedPenalty : 600.00;
           await db.query(`
             INSERT INTO maintenance_orders (
               ticket_id, vehicle_code, vehicle_model, vehicle_category, 
               issue_category, description, assigned_technician, service_center, 
               priority, status, estimated_cost, zone
             )
-            VALUES ($1, $2, 'Evegah City', 'E-Scooter', $3, $4, 'Unassigned', 'Central Workshop', 'High', 'Scheduled', $5, 'Gotri Zone')
+            VALUES ($1, $2, 'Evegah City', 'E-Scooter', $3, $4, $5, 'Central Workshop', $6, 'Scheduled', $7, 'Gotri Zone')
           `, [
             ticketId,
             vehicle_id,
-            damage_category || 'Return Inspection Damage',
-            notes || `Vehicle flagged with damage during return inspection (${return_condition || 'Issue'}).`,
+            damage_category || 'Return Inspection Defect',
+            final_remarks || notes || `Flagged during 26-point return inspection (${return_condition || 'Penalty Assessment'}).`,
+            assigned_technician || 'Central Workshop Technician',
+            maintenance_priority || 'High',
             estCost
           ]).catch(e => console.warn('Could not auto-insert maintenance order on return:', e.message));
         } else {
@@ -532,6 +560,28 @@ router.post('/return', async (req, res) => {
           `, [vehicle_id]);
         }
       }
+
+      // Record detailed 26-item checklist inspection in return_inspections table
+      await db.query(`
+        INSERT INTO return_inspections (
+          mobile, vehicle_id, damage_charge, total_charges, line_items, correction_note, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `, [
+        cleanMob || mobile,
+        vehicle_id,
+        calculatedPenalty,
+        calculatedPenalty,
+        JSON.stringify({
+          inspection_items: inspection_items || [],
+          total_penalty: calculatedPenalty,
+          final_vehicle_status: final_vehicle_status || (isDamaged ? 'Maintenance Required' : 'Available for Next Ride'),
+          maintenance_required: maintenance_required || (isDamaged ? 'Yes' : 'No'),
+          maintenance_priority: maintenance_priority || 'Medium',
+          assigned_technician: assigned_technician || 'Central Workshop',
+          inspector_name: inspector_name || 'Verified Inspector'
+        }),
+        final_remarks || notes || '26-Point E-Scooter Inspection Completed'
+      ]).catch(e => console.warn('Could not record return_inspections:', e.message));
 
       // Release battery back to available
       const renterRec = await db.query(
@@ -554,10 +604,9 @@ router.post('/return', async (req, res) => {
       ).catch(() => ({ rows: [] }));
       const resDep = existingRes.rows[0]?.deposit !== undefined && existingRes.rows[0]?.deposit !== null ? parseFloat(existingRes.rows[0].deposit) : null;
       const originalDep = renterDep !== null ? renterDep : (resDep !== null ? resDep : 0);
-      const depRefund = originalDep > 0
-        ? ((refund_deposit !== undefined && refund_deposit !== null && refund_deposit !== '') ? parseFloat(refund_deposit) : originalDep)
-        : 0;
-      const deductionsAmt = Math.max(0, originalDep - depRefund);
+      const penaltyDeduction = calculatedPenalty > 0 ? calculatedPenalty : (refund_deposit !== undefined && refund_deposit !== null && refund_deposit !== '' ? Math.max(0, originalDep - parseFloat(refund_deposit)) : 0);
+      const deductionsAmt = Math.min(originalDep, penaltyDeduction);
+      const depRefund = originalDep > 0 ? Math.max(0, originalDep - deductionsAmt) : 0;
       const depStatus = originalDep > 0 ? 'Pending_Refund' : 'None';
 
       const resUpdate = await db.query(`
@@ -571,7 +620,7 @@ router.post('/return', async (req, res) => {
             refund_deductions = $5
         WHERE (mobile LIKE $6 AND mobile != '') OR vehicle_number = $7
         RETURNING id
-      `, [return_condition || (isDamaged ? 'Damaged / Inspection Failed' : 'Clean / Good'), notes || '', depStatus, depRefund, deductionsAmt, `%${cleanMob}%`, vehicle_id]);
+      `, [final_vehicle_status || return_condition || (isDamaged ? 'Damaged / Inspection Defect' : 'Available for Next Ride'), final_remarks || notes || '', depStatus, depRefund, deductionsAmt, `%${cleanMob}%`, vehicle_id]);
 
       if (resUpdate.rows.length === 0 && originalDep > 0) {
         await db.query(`

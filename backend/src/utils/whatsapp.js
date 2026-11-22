@@ -1,9 +1,23 @@
 // WhatsApp Cloud API Utility for Sending Payment Receipts
 
+const db = require('../db');
 const getEnv = (key, fallback = '') => process.env[key] || fallback;
 
 // In-memory cache to prevent sending duplicate receipts within 30 minutes
 const RECENT_RECEIPTS = new Map();
+
+async function isWhatsAppEnabledInSettings() {
+  try {
+    const sRes = await db.query("SELECT values FROM settings WHERE category = 'notifications' LIMIT 1");
+    if (sRes.rows.length > 0 && sRes.rows[0].values) {
+      const v = sRes.rows[0].values;
+      if (v.whatsapp_enabled === false) {
+        return false;
+      }
+    }
+  } catch (_) {}
+  return true;
+}
 
 function isDuplicateReceipt(cleanMobile, invoiceNo) {
   if (!invoiceNo) return false;
@@ -47,6 +61,11 @@ async function sendWhatsAppReceipt(firstArg, secondArg = {}) {
     amount = '0',
     receipt_url
   } = opts;
+
+  if (!(await isWhatsAppEnabledInSettings())) {
+    console.log('[WhatsApp] Dispatch aborted: WhatsApp messages are turned OFF in Admin Settings.');
+    return { success: false, skipped: true, reason: 'WhatsApp messages disabled in Settings' };
+  }
 
   if (!mobile) {
     console.warn('[WhatsApp] Skipped receipt: No mobile number provided');
@@ -177,6 +196,11 @@ async function sendWhatsAppDirectMessage(firstArg, secondArg) {
   let targetText = typeof firstArg === 'object' && firstArg !== null ? (firstArg.message || firstArg.text || firstArg.textBody || firstArg.body) : secondArg;
 
   if (!targetMobile) return { status: 'skipped', message: 'No mobile provided' };
+
+  if (!(await isWhatsAppEnabledInSettings())) {
+    console.log('[WhatsApp] Dispatch aborted: WhatsApp messages are turned OFF in Admin Settings.');
+    return { status: 'skipped', message: 'WhatsApp messages disabled in Settings' };
+  }
   const token = getEnv('WHATSAPP_CLOUD_ACCESS_TOKEN');
   const phoneId = getEnv('WHATSAPP_PHONE_NUMBER_ID', '919221374614519');
   const version = getEnv('WHATSAPP_GRAPH_VERSION', 'v21.0').replace(/^v?/, 'v');

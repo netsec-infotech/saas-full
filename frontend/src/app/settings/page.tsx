@@ -2247,7 +2247,7 @@ function SettingsContent() {
                             </div>
                             <div className="se-field-text">
                               <span className="se-field-tit">SMS Notifications</span>
-                              <span className="se-field-desc">Receive important SMS alerts.</span>
+                              <span className="se-field-desc">Receive critical telecom SMS alerts.</span>
                             </div>
                           </div>
                           <div className="se-field-control">
@@ -2262,6 +2262,29 @@ function SettingsContent() {
                           </div>
                         </div>
 
+                        {/* WhatsApp Cloud Messaging Channel */}
+                        <div className="se-field-row">
+                          <div className="se-field-left">
+                            <div className="se-field-icon" style={{ background: '#DCFCE7', color: '#15803D' }}>
+                              <span style={{ fontSize: '15px' }}>💬</span>
+                            </div>
+                            <div className="se-field-text">
+                              <span className="se-field-tit">WhatsApp Cloud API</span>
+                              <span className="se-field-desc">Turn on/off automated WhatsApp messages &amp; receipts.</span>
+                            </div>
+                          </div>
+                          <div className="se-field-control">
+                            <label className="se-switch">
+                              <input
+                                type="checkbox"
+                                checked={currentSettings.notifications.whatsapp_enabled ?? true}
+                                onChange={(e) => updateField('notifications', 'whatsapp_enabled', e.target.checked)}
+                              />
+                              <span className="se-slider" />
+                            </label>
+                          </div>
+                        </div>
+
                         {/* In-app notification channel */}
                         <div className="se-field-row">
                           <div className="se-field-left">
@@ -2269,8 +2292,8 @@ function SettingsContent() {
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                             </div>
                             <div className="se-field-text">
-                              <span className="se-field-tit">In-App Notifications</span>
-                              <span className="se-field-desc">Receive in-app alerts.</span>
+                              <span className="se-field-tit">In-App Push Notifications</span>
+                              <span className="se-field-desc">Deliver mobile push alerts to Rider &amp; Fleet apps.</span>
                             </div>
                           </div>
                           <div className="se-field-control">
@@ -2278,11 +2301,76 @@ function SettingsContent() {
                               <input
                                 type="checkbox"
                                 checked={currentSettings.notifications.channels_inapp}
-                                onChange={(e) => updateField('notifications', 'channels_inapp', e.target.checked)}
+                                onChange={(e) => {
+                                  updateField('notifications', 'channels_inapp', e.target.checked);
+                                  updateField('notifications', 'push_enabled', e.target.checked);
+                                }}
                               />
                               <span className="se-slider" />
                             </label>
                           </div>
+                        </div>
+                      </div>
+
+                      {/* App Push Notification Gateway Config */}
+                      <div className="se-card">
+                        <div className="se-card-hdr">
+                          <div className="se-card-ic">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                          </div>
+                          <div className="se-card-text">
+                            <span className="se-card-tit">App Push Notification Config</span>
+                            <span className="se-card-sub">Firebase Cloud Messaging (FCM) &amp; APNs settings.</span>
+                          </div>
+                        </div>
+
+                        <div className="se-field">
+                          <div className="se-field-info">
+                            <span className="se-field-tit">FCM Project ID</span>
+                            <span className="se-field-desc">Google Firebase Console Project Identifier.</span>
+                          </div>
+                          <input
+                            type="text"
+                            className="se-input"
+                            value={currentSettings.notifications.fcm_project_id || 'evegah-rider-prod'}
+                            onChange={(e) => updateField('notifications', 'fcm_project_id', e.target.value)}
+                            placeholder="evegah-rider-prod"
+                          />
+                        </div>
+
+                        <div className="se-field">
+                          <div className="se-field-info">
+                            <span className="se-field-tit">FCM Server Key / Service Account</span>
+                            <span className="se-field-desc">Firebase Cloud Messaging Authorization Key.</span>
+                          </div>
+                          <input
+                            type="password"
+                            className="se-input"
+                            value={currentSettings.notifications.fcm_server_key || ''}
+                            onChange={(e) => updateField('notifications', 'fcm_server_key', e.target.value)}
+                            placeholder="AIzaSy... (FCM Server Key)"
+                          />
+                        </div>
+
+                        <div style={{ marginTop: '12px' }}>
+                          <button
+                            type="button"
+                            className="se-btn se-btn-secondary"
+                            style={{ width: '100%', justifyContent: 'center', fontSize: '12px', fontWeight: 700 }}
+                            onClick={async () => {
+                              try {
+                                const testRes: any = await api.post('/settings/notifications/test-push', {
+                                  title: 'Evegah Test Alert',
+                                  message: 'Push notification engine is operational and connected to backend API.'
+                                });
+                                alert(testRes?.message || 'Test push notification sent successfully!');
+                              } catch (e: any) {
+                                alert('Failed to trigger test push: ' + (e.response?.data?.message || e.message));
+                              }
+                            }}
+                          >
+                            🚀 Send Test In-App Push Notification
+                          </button>
                         </div>
                       </div>
 
@@ -2436,40 +2524,76 @@ function SettingsContent() {
                     {/* Summary row */}
                     <div className="se-card se-grid-all">
                       <span className="se-card-tit">Notification Summary</span>
-                      <div className="se-noti-sum-row">
-                        <div className="se-noti-sum-card">
-                          <div className="se-noti-sum-ic">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
-                          </div>
-                          <div className="se-noti-sum-info">
-                            <span className="se-noti-sum-lbl">Email</span>
-                            <span className="se-noti-sum-val">6 of 8 enabled</span>
-                            <span className="se-noti-sum-val" style={{ color: '#2a195c', fontWeight: '600' }}>{typeof window !== 'undefined' ? (localStorage.getItem('evegah_user_email') || 'himanshu@evegah.com') : 'himanshu@evegah.com'}</span>
-                          </div>
-                        </div>
+                      {(() => {
+                        const n = currentSettings.notifications;
+                        const emailCount = [
+                          n.prefs_ride_bookings?.email,
+                          n.prefs_rental_bookings?.email,
+                          n.prefs_payments?.email,
+                          n.prefs_payouts?.email,
+                          n.prefs_battery_alerts?.email,
+                          n.prefs_vehicle_alerts?.email,
+                          n.prefs_system_alerts?.email,
+                          n.prefs_promotions?.email
+                        ].filter(Boolean).length;
+                        const smsCount = [
+                          n.prefs_ride_bookings?.sms,
+                          n.prefs_rental_bookings?.sms,
+                          n.prefs_payments?.sms,
+                          n.prefs_payouts?.sms,
+                          n.prefs_battery_alerts?.sms,
+                          n.prefs_vehicle_alerts?.sms,
+                          n.prefs_system_alerts?.sms,
+                          n.prefs_promotions?.sms
+                        ].filter(Boolean).length;
+                        const inappCount = [
+                          n.prefs_ride_bookings?.inapp,
+                          n.prefs_rental_bookings?.inapp,
+                          n.prefs_payments?.inapp,
+                          n.prefs_payouts?.inapp,
+                          n.prefs_battery_alerts?.inapp,
+                          n.prefs_vehicle_alerts?.inapp,
+                          n.prefs_system_alerts?.inapp,
+                          n.prefs_promotions?.inapp
+                        ].filter(Boolean).length;
 
-                        <div className="se-noti-sum-card">
-                          <div className="se-noti-sum-ic" style={{ background: '#ECFDF5', color: '#10B981' }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
-                          </div>
-                          <div className="se-noti-sum-info">
-                            <span className="se-noti-sum-lbl">SMS</span>
-                            <span className="se-noti-sum-val">4 of 8 enabled</span>
-                            <span className="se-noti-sum-val" style={{ color: '#10B981', fontWeight: '600' }}>+91 98765 43210</span>
-                          </div>
-                        </div>
+                        return (
+                          <div className="se-noti-sum-row">
+                            <div className="se-noti-sum-card">
+                              <div className="se-noti-sum-ic">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></svg>
+                              </div>
+                              <div className="se-noti-sum-info">
+                                <span className="se-noti-sum-lbl">Email</span>
+                                <span className="se-noti-sum-val">{emailCount} of 8 enabled</span>
+                                <span className="se-noti-sum-val" style={{ color: '#2a195c', fontWeight: '600' }}>{typeof window !== 'undefined' ? (localStorage.getItem('evegah_user_email') || 'himanshu@evegah.com') : 'himanshu@evegah.com'}</span>
+                              </div>
+                            </div>
 
-                        <div className="se-noti-sum-card">
-                          <div className="se-noti-sum-ic" style={{ background: '#FFF7ED', color: '#F97316' }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <div className="se-noti-sum-card">
+                              <div className="se-noti-sum-ic" style={{ background: '#ECFDF5', color: '#10B981' }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+                              </div>
+                              <div className="se-noti-sum-info">
+                                <span className="se-noti-sum-lbl">SMS / WhatsApp</span>
+                                <span className="se-noti-sum-val">{smsCount} of 8 enabled</span>
+                                <span className="se-noti-sum-val" style={{ color: '#10B981', fontWeight: '600' }}>{n.whatsapp_enabled !== false ? 'WhatsApp Dispatch Active' : 'WhatsApp Disabled'}</span>
+                              </div>
+                            </div>
+
+                            <div className="se-noti-sum-card">
+                              <div className="se-noti-sum-ic" style={{ background: '#FFF7ED', color: '#F97316' }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                              </div>
+                              <div className="se-noti-sum-info">
+                                <span className="se-noti-sum-lbl">In-App Push</span>
+                                <span className="se-noti-sum-val">{inappCount} of 8 enabled</span>
+                                <span className="se-noti-sum-val" style={{ color: '#F97316', fontWeight: '600' }}>{n.push_enabled !== false ? 'FCM Push Active' : 'Push Inactive'}</span>
+                              </div>
+                            </div>
                           </div>
-                          <div className="se-noti-sum-info">
-                            <span className="se-noti-sum-lbl">In-App</span>
-                            <span className="se-noti-sum-val">8 of 8 enabled</span>
-                            <span className="se-noti-sum-val" style={{ color: '#F97316', fontWeight: '600' }}>Will be shown in app</span>
-                          </div>
-                        </div>
-                      </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
