@@ -347,7 +347,7 @@ function RightPanel({
     : rateType === 'hourly'
     ? '1 Hour'
     : durationDays === 0.5
-    ? 'Half Day (12 Hours)'
+    ? 'Half Day'
     : `${durationDays} ${durationDays === 1 ? 'Day' : 'Days'}`;
 
   return (
@@ -866,7 +866,7 @@ export default function RentalDetailsPage() {
       applicable.forEach((p: any, idx: number) => {
         const d = parseDurationDays(p);
         const pModel = (p.model || '').toLowerCase().trim();
-        const pkgName = p.name || (d === 0.5 ? 'Half Day Pass (12 Hours)' : d === 1 ? 'Daily Pass (1 Day)' : d === 7 ? 'Weekly Pass (7 Days)' : d === 30 ? 'Monthly Pass (30 Days)' : `${d} Days Pass`);
+        const pkgName = p.name || (d === 0.5 ? 'Half Day Pass' : d === 1 ? 'Daily Pass' : d === 7 ? 'Weekly Pass' : d === 30 ? 'Monthly Pas' : `${d} Days Pass`);
         const key = `${d}_${pkgName.toLowerCase()}_${pModel}`;
         byKey.set(key, {
           ...p,
@@ -1341,7 +1341,7 @@ export default function RentalDetailsPage() {
                               : selectedPackage?.rateType === 'hourly'
                               ? ' / 1 Hour'
                               : (selectedPackage ? parseDurationDays(selectedPackage) : totalDays) === 0.5
-                              ? ' / Half Day (12 Hours)'
+                              ? ' / Half Day'
                               : ` / ${selectedPackage ? parseDurationDays(selectedPackage) : totalDays} ${
                                   (selectedPackage ? parseDurationDays(selectedPackage) : totalDays) === 1 ? 'Day' : 'Days'
                                 }`}

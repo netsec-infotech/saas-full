@@ -1025,10 +1025,10 @@ function PricingForm() {
                           }
                         }}
                       >
-                        <option value="Half Day">Half Day (12 Hours)</option>
-                        <option value="Daily">Daily (24 Hours)</option>
-                        <option value="Weekly">Weekly (7 Days)</option>
-                        <option value="Monthly">Monthly (30 Days)</option>
+                        <option value="Half Day">Half Day</option>
+                        <option value="Daily">Daily</option>
+                        <option value="Weekly">Weekly</option>
+                        <option value="Monthly">Monthly</option>
                         <option value="Custom">Custom Package</option>
                       </select>
                     </div>
@@ -1050,7 +1050,7 @@ function PricingForm() {
                         step="0.5"
                         min="0.5"
                         className="zp-form-input" 
-                        placeholder="e.g. 0.5 (12 Hours), 1 (Daily)"
+                        placeholder="e.g. 0.5, 1 (Daily)"
                         value={newPkgDuration}
                         onChange={(e) => setNewPkgDuration(e.target.value)}
                         disabled={pkgType !== 'Custom'}
@@ -1149,10 +1149,10 @@ function PricingForm() {
                                 }}
                                 style={{ fontWeight: 700, width: '100%', padding: '6px 8px' }}
                               >
-                                <option value="Half Day">Half Day (12h)</option>
-                                <option value="Daily">Daily (24h)</option>
-                                <option value="Weekly">Weekly (7d)</option>
-                                <option value="Monthly">Monthly (30d)</option>
+                                <option value="Half Day">Half Day</option>
+                                <option value="Daily">Daily</option>
+                                <option value="Weekly">Weekly</option>
+                                <option value="Monthly">Monthly</option>
                                 <option value="Custom">Custom</option>
                               </select>
                               {(!['Half Day', 'Daily', 'Weekly', 'Monthly'].includes(pkg.name) || pkg.name === 'Custom') && (
