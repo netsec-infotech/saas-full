@@ -268,7 +268,10 @@ function PricingForm() {
   const handleAddPackage = () => {
     let nameToUse = newPkgName;
     let durationToUse = newPkgDuration;
-    if (pkgType === 'Daily') {
+    if (pkgType === 'Half Day') {
+      nameToUse = newPkgName || 'Half Day';
+      durationToUse = '0.5';
+    } else if (pkgType === 'Daily') {
       nameToUse = 'Daily';
       durationToUse = '1';
     } else if (pkgType === 'Weekly') {
@@ -283,11 +286,14 @@ function PricingForm() {
       alert('Please fill out all fields for the package.');
       return;
     }
+    const durVal = parseFloat(durationToUse) || 0.5;
     const newPkg = {
       id: Date.now(),
       model: newPkgModel || hourlyRows[0]?.model || 'All Models',
       name: nameToUse,
-      duration: parseInt(durationToUse),
+      duration: durVal,
+      duration_days: durVal,
+      duration_hours: durVal * 24,
       price: parseFloat(newPkgPrice),
       deposit: parseFloat(newPkgDeposit) || 0
     };
@@ -1001,7 +1007,10 @@ function PricingForm() {
                         onChange={(e) => {
                           const val = e.target.value;
                           setPkgType(val);
-                          if (val === 'Daily') {
+                          if (val === 'Half Day') {
+                            setNewPkgName('Half Day');
+                            setNewPkgDuration('0.5');
+                          } else if (val === 'Daily') {
                             setNewPkgName('Daily');
                             setNewPkgDuration('1');
                           } else if (val === 'Weekly') {
@@ -1016,10 +1025,11 @@ function PricingForm() {
                           }
                         }}
                       >
-                        <option value="Daily">Daily</option>
-                        <option value="Weekly">Weekly</option>
-                        <option value="Monthly">Monthly</option>
-                        <option value="Custom">Custom</option>
+                        <option value="Half Day">Half Day (12 Hours)</option>
+                        <option value="Daily">Daily (24 Hours)</option>
+                        <option value="Weekly">Weekly (7 Days)</option>
+                        <option value="Monthly">Monthly (30 Days)</option>
+                        <option value="Custom">Custom Package</option>
                       </select>
                     </div>
                     <div className="zp-form-group">
@@ -1027,7 +1037,7 @@ function PricingForm() {
                       <input 
                         type="text" 
                         className="zp-form-input" 
-                        placeholder="e.g. Daily"
+                        placeholder={pkgType === 'Custom' ? "e.g. Weekend Pass or Half Day Special" : "e.g. Daily"}
                         value={newPkgName}
                         onChange={(e) => setNewPkgName(e.target.value)}
                         disabled={pkgType !== 'Custom'}
@@ -1037,8 +1047,10 @@ function PricingForm() {
                       <label className="zp-form-label">Duration (Days)</label>
                       <input 
                         type="number" 
+                        step="0.5"
+                        min="0.5"
                         className="zp-form-input" 
-                        placeholder="e.g. 1"
+                        placeholder="e.g. 0.5 (12 Hours), 1 (Daily)"
                         value={newPkgDuration}
                         onChange={(e) => setNewPkgDuration(e.target.value)}
                         disabled={pkgType !== 'Custom'}
@@ -1115,35 +1127,72 @@ function PricingForm() {
                             </select>
                           </td>
                           <td>
-                            <select
-                              className="zp-select-inline"
-                              value={pkg.name}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                let dur = pkg.duration;
-                                if (val === 'Daily') dur = 1;
-                                else if (val === 'Weekly') dur = 7;
-                                else if (val === 'Monthly') dur = 30;
-                                handlePackageMultiChange(pkg.id, { name: val, duration: dur });
-                              }}
-                              style={{ fontWeight: 700, width: '100%', padding: '6px 8px' }}
-                            >
-                              <option value="Daily">Daily</option>
-                              <option value="Weekly">Weekly</option>
-                              <option value="Monthly">Monthly</option>
-                              <option value="Custom">Custom</option>
-                            </select>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                              <select
+                                className="zp-select-inline"
+                                value={['Half Day', 'Daily', 'Weekly', 'Monthly'].includes(pkg.name) ? pkg.name : 'Custom'}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === 'Half Day') {
+                                    handlePackageMultiChange(pkg.id, { name: 'Half Day', duration: 0.5, duration_days: 0.5, duration_hours: 12 });
+                                  } else if (val === 'Daily') {
+                                    handlePackageMultiChange(pkg.id, { name: 'Daily', duration: 1, duration_days: 1, duration_hours: 24 });
+                                  } else if (val === 'Weekly') {
+                                    handlePackageMultiChange(pkg.id, { name: 'Weekly', duration: 7, duration_days: 7, duration_hours: 168 });
+                                  } else if (val === 'Monthly') {
+                                    handlePackageMultiChange(pkg.id, { name: 'Monthly', duration: 30, duration_days: 30, duration_hours: 720 });
+                                  } else {
+                                    handlePackageMultiChange(pkg.id, { 
+                                      name: ['Half Day', 'Daily', 'Weekly', 'Monthly'].includes(pkg.name) ? 'Custom' : pkg.name 
+                                    });
+                                  }
+                                }}
+                                style={{ fontWeight: 700, width: '100%', padding: '6px 8px' }}
+                              >
+                                <option value="Half Day">Half Day (12h)</option>
+                                <option value="Daily">Daily (24h)</option>
+                                <option value="Weekly">Weekly (7d)</option>
+                                <option value="Monthly">Monthly (30d)</option>
+                                <option value="Custom">Custom</option>
+                              </select>
+                              {(!['Half Day', 'Daily', 'Weekly', 'Monthly'].includes(pkg.name) || pkg.name === 'Custom') && (
+                                <input
+                                  type="text"
+                                  className="zp-input-inline"
+                                  value={pkg.name === 'Custom' ? '' : pkg.name}
+                                  placeholder="Type custom package name..."
+                                  onChange={(e) => handlePackageChange(pkg.id, 'name', e.target.value || 'Custom')}
+                                  style={{ 
+                                    width: '100%', 
+                                    padding: '5px 8px', 
+                                    fontSize: '12px', 
+                                    fontWeight: 600, 
+                                    color: '#2A195C', 
+                                    border: '1.5px solid #6366F1', 
+                                    borderRadius: '4px',
+                                    backgroundColor: '#EEF2FF'
+                                  }}
+                                />
+                              )}
+                            </div>
                           </td>
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                               <input 
                                 type="number"
+                                step="0.5"
+                                min="0.5"
                                 className="zp-input-inline"
                                 value={pkg.duration}
-                                onChange={(e) => handlePackageChange(pkg.id, 'duration', parseInt(e.target.value) || 1)}
-                                style={{ width: '60px', padding: '6px 8px', fontWeight: 600 }}
+                                onChange={(e) => {
+                                  const dur = parseFloat(e.target.value) || 0.5;
+                                  handlePackageMultiChange(pkg.id, { duration: dur, duration_days: dur, duration_hours: dur * 24 });
+                                }}
+                                style={{ width: '65px', padding: '6px 8px', fontWeight: 600 }}
                               />
-                              <span style={{ fontSize: '11.5px', color: '#64748B' }}>Days</span>
+                              <span style={{ fontSize: '11px', color: '#64748B', whiteSpace: 'nowrap' }}>
+                                {Number(pkg.duration) === 0.5 ? 'Day (12h)' : Number(pkg.duration) === 1 ? 'Day' : 'Days'}
+                              </span>
                             </div>
                           </td>
                           <td>

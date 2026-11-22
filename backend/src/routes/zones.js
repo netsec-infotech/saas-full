@@ -336,15 +336,16 @@ router.get('/pricing', async (req, res) => {
     // 3. Map multi-day / package pricing options
     if (Array.isArray(pricingObj.packages) && pricingObj.packages.length > 0) {
       pricingObj.packages.forEach((p, idx) => {
-        const days = parseInt(p.duration || p.duration_days || 1, 10);
+        const days = parseFloat(p.duration || p.duration_days || 1);
+        const hours = p.duration_hours ? parseFloat(p.duration_hours) : (days * 24);
         packages.push({
           id: p.id || `pkg_${idx + 1}`,
-          name: p.name || p.title || `${days} Day Pass`,
+          name: p.name || p.title || (days === 0.5 ? 'Half Day Pass' : `${days} Day Pass`),
           pricing_type: 'Package',
           rate_type: 'package',
           duration: days,
           duration_days: days,
-          duration_hours: days * 24,
+          duration_hours: hours,
           price: parseFloat(p.price || p.base_fare || 0),
           base_fare: parseFloat(p.price || p.base_fare || 0),
           deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (pricingObj.securityDeposit || 0)),

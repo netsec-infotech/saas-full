@@ -365,8 +365,28 @@ export default function DepositRefundPage() {
       });
 
       if (res && res.status === 'success') {
-        setActionSuccess(`✓ Security Deposit of ₹${netRefundAmount} successfully authorized and refunded! Request ID: ${res.data?.tx_id || 'REF-DONE'}`);
+        const txId = res.data?.tx_id || 'REF-DONE';
+        setActionSuccess(`✓ Security Deposit of ₹${netRefundAmount} successfully authorized and refunded! Request ID: ${txId}`);
         closeRefundModal();
+        setActiveTab('Completed'); // Switch directly to Refunded History tab
+        setCompletedRefunds(prev => [
+          {
+            id: selectedPending.id,
+            reservation_id: selectedPending.reservation_id,
+            rider: selectedPending.rider,
+            mobile: selectedPending.mobile,
+            vehicle: selectedPending.vehicle,
+            refundDate: new Date().toISOString(),
+            txId: txId,
+            deposit: selectedPending.deposit,
+            deductions: damageDeductions,
+            refundAmount: netRefundAmount,
+            method: refundMethod,
+            status: 'Successful'
+          },
+          ...prev.filter(c => c.txId !== txId && c.id !== selectedPending.id)
+        ]);
+        setPendingRefunds(prev => prev.filter(item => item.id !== selectedPending.id));
         await fetchDeposits();
         setTimeout(() => setActionSuccess(null), 6000);
       } else {
@@ -435,11 +455,15 @@ export default function DepositRefundPage() {
     if (!window.confirm(`Are you sure you want to delete / dismiss ${selectedIds.length} selected deposit record(s)?`)) return;
     try {
       setIsDeleting(true);
-      await api.delete('/reservations/deposits', { data: { ids: selectedIds } });
+      const toDelete = [...selectedIds];
+      setCompletedRefunds(prev => prev.filter(item => !toDelete.includes(String(item.id)) && !toDelete.includes(item.txId)));
+      setPendingRefunds(prev => prev.filter(item => !toDelete.includes(String(item.id))));
       setSelectedIds([]);
+      await api.delete('/reservations/deposits', { data: { ids: toDelete } });
       await fetchDeposits();
     } catch (err: any) {
       alert(err?.response?.data?.message || err?.message || 'Failed to delete deposit records');
+      await fetchDeposits();
     } finally {
       setIsDeleting(false);
     }
@@ -449,11 +473,14 @@ export default function DepositRefundPage() {
     if (!window.confirm('Are you sure you want to delete / dismiss this deposit record?')) return;
     try {
       setIsDeleting(true);
-      await api.delete(`/reservations/deposits/${id}`);
+      setCompletedRefunds(prev => prev.filter(item => String(item.id) !== id && item.txId !== id));
+      setPendingRefunds(prev => prev.filter(item => String(item.id) !== id));
       setSelectedIds(prev => prev.filter(item => item !== id));
+      await api.delete(`/reservations/deposits/${id}`);
       await fetchDeposits();
     } catch (err: any) {
       alert(err?.response?.data?.message || err?.message || 'Failed to delete deposit record');
+      await fetchDeposits();
     } finally {
       setIsDeleting(false);
     }
@@ -898,7 +925,7 @@ export default function DepositRefundPage() {
                                 <button
                                   className="action-delete-btn"
                                   title="Delete / Dismiss Record"
-                                  onClick={() => handleSingleDelete(String(r.id))}
+                                  onClick={() => handleSingleDelete(String(r.id || r.txId))}
                                   disabled={isDeleting}
                                 >
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">

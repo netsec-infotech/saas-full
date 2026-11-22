@@ -346,6 +346,8 @@ function RightPanel({
     ? `Min ${minMinutes || 10} Mins`
     : rateType === 'hourly'
     ? '1 Hour'
+    : durationDays === 0.5
+    ? 'Half Day (12 Hours)'
     : `${durationDays} ${durationDays === 1 ? 'Day' : 'Days'}`;
 
   return (
@@ -532,6 +534,7 @@ const parseDurationDays = (pkg: any): number => {
     return Number(pkg.duration);
   }
   const name = `${pkg.name || ''} ${pkg.type || ''}`.toLowerCase();
+  if (name.includes('half day') || name.includes('half-day') || name.includes('12 hour') || name.includes('0.5')) return 0.5;
   const match = name.match(/(\d+)\s*day/i);
   if (match) return parseInt(match[1], 10);
   if (name.includes('month') || name.includes('30 day')) return 30;
@@ -859,29 +862,27 @@ export default function RentalDetailsPage() {
         return matchesModel(p.model, selectedModelName);
       });
 
-      const byDuration = new Map<number, any>();
+      const byKey = new Map<string, any>();
       applicable.forEach((p: any, idx: number) => {
         const d = parseDurationDays(p);
-        const existing = byDuration.get(d);
         const pModel = (p.model || '').toLowerCase().trim();
-        const isModelSpecific = pModel && pModel !== 'all models' && pModel !== 'all';
-        if (!existing || isModelSpecific) {
-          byDuration.set(d, {
-            ...p,
-            id: p.id || `pkg_${d}d_${idx}`,
-            duration: d,
-            duration_days: d,
-            duration_hours: d * 24,
-            name: p.name || (d === 1 ? 'Daily Pass (1 Day)' : d === 7 ? 'Weekly Pass (7 Days)' : d === 30 ? 'Monthly Pass (30 Days)' : `${d} Days Pass`),
-            price: parseFloat(p.price || 0),
-            deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0)),
-            rateType: 'package',
-            model: p.model || selectedModelName
-          });
-        }
+        const pkgName = p.name || (d === 0.5 ? 'Half Day Pass (12 Hours)' : d === 1 ? 'Daily Pass (1 Day)' : d === 7 ? 'Weekly Pass (7 Days)' : d === 30 ? 'Monthly Pass (30 Days)' : `${d} Days Pass`);
+        const key = `${d}_${pkgName.toLowerCase()}_${pModel}`;
+        byKey.set(key, {
+          ...p,
+          id: p.id || `pkg_${d}d_${idx}`,
+          duration: d,
+          duration_days: d,
+          duration_hours: p.duration_hours || (d * 24),
+          name: pkgName,
+          price: parseFloat(p.price || 0),
+          deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0)),
+          rateType: 'package',
+          model: p.model || selectedModelName
+        });
       });
 
-      const sortedPkgs = Array.from(byDuration.values()).sort((a, b) => a.duration - b.duration);
+      const sortedPkgs = Array.from(byKey.values()).sort((a, b) => a.duration - b.duration);
       pkgs.push(...sortedPkgs);
     }
 
@@ -946,10 +947,33 @@ export default function RentalDetailsPage() {
     } else {
       const duration = parseDurationDays(selectedPackage);
       setTotalDays(duration);
-      const dropDateObj = new Date(parsedStart);
-      dropDateObj.setDate(dropDateObj.getDate() + duration);
-      setReturnDate(formatLocalDate(dropDateObj));
-      setReturnTime(startTime || selectedZone?.close_time || '08:00 PM');
+      if (duration === 0.5) {
+        // Half Day = 12 Hours from Start Time
+        const match = (startTime || '12:00 PM').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+        if (match) {
+          let h = parseInt(match[1], 10);
+          const min = parseInt(match[2], 10);
+          const ampm = match[3] ? match[3].toUpperCase() : 'AM';
+          if (ampm === 'PM' && h !== 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          const d = new Date(parsedStart);
+          d.setHours(h + 12, min);
+          let resH = d.getHours();
+          const resM = d.getMinutes();
+          const resAmpm = resH >= 12 ? 'PM' : 'AM';
+          resH = resH % 12 || 12;
+          setReturnTime(`${resH}:${resM < 10 ? '0' + resM : resM} ${resAmpm}`);
+          setReturnDate(formatLocalDate(d));
+        } else {
+          setReturnDate(formatLocalDate(parsedStart));
+          setReturnTime('08:00 PM');
+        }
+      } else {
+        const dropDateObj = new Date(parsedStart);
+        dropDateObj.setDate(dropDateObj.getDate() + Math.floor(duration));
+        setReturnDate(formatLocalDate(dropDateObj));
+        setReturnTime(startTime || selectedZone?.close_time || '08:00 PM');
+      }
     }
   }, [startDate, startTime, selectedPackage, selectedZone]);
 
@@ -1316,6 +1340,8 @@ export default function RentalDetailsPage() {
                               ? ` / Min (Min ${selectedPackage.minMinutes || 10}m)`
                               : selectedPackage?.rateType === 'hourly'
                               ? ' / 1 Hour'
+                              : (selectedPackage ? parseDurationDays(selectedPackage) : totalDays) === 0.5
+                              ? ' / Half Day (12 Hours)'
                               : ` / ${selectedPackage ? parseDurationDays(selectedPackage) : totalDays} ${
                                   (selectedPackage ? parseDurationDays(selectedPackage) : totalDays) === 1 ? 'Day' : 'Days'
                                 }`}

@@ -20,6 +20,12 @@ const { sendWhatsAppReceipt } = require('../utils/whatsapp');
     await db.query(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_voucher_number VARCHAR(100)`);
     await db.query(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS cash_collected_by VARCHAR(100)`);
     await db.query(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS booking_source VARCHAR(50) DEFAULT 'Rider App'`);
+    // Remove legacy dummy "Evegah Rider" refund idempotency records that could not be deleted
+    await db.query(`
+      DELETE FROM refund_idempotency 
+      WHERE reservation_key IN ('aec68f8d-6110-4678-8363-9cab0b3a833c', 'e84ae766-0271-421f-8bac-ad43cbc9917d') 
+         OR result->>'tx_id' IN ('REF-41148920', 'REF-41187031')
+    `).catch(() => {});
   } catch (e) {
     console.warn('Reservations DB column init notice:', e.message);
   }
@@ -274,9 +280,9 @@ router.get('/deposits', async (req, res) => {
 
     const resParams = [];
     if (!isAllZones) {
-      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
-      resQuery += ` AND (pickup_zone ILIKE $1 OR drop_zone ILIKE $1 OR pickup_zone ILIKE $2 OR drop_zone ILIKE $2)`;
-      resParams.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+      const zoneClean = effectiveZone.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
+      resQuery += ` AND (pickup_zone ILIKE $1 OR drop_zone ILIKE $1 OR pickup_zone ILIKE $2 OR drop_zone ILIKE $2 OR $3 ILIKE '%' || COALESCE(NULLIF(pickup_zone, ''), 'none') || '%' OR $3 ILIKE '%' || COALESCE(NULLIF(drop_zone, ''), 'none') || '%')`;
+      resParams.push(`%${effectiveZone}%`, `%${zoneClean}%`, effectiveZone);
     }
     resQuery += ` ORDER BY COALESCE(returned_at, created_at) DESC`;
 
@@ -299,13 +305,13 @@ router.get('/deposits', async (req, res) => {
         r.created_at
       FROM renters r
       LEFT JOIN vehicles v ON (v.code = r.vehicle_id OR v.registration_number = r.vehicle_id)
-      WHERE r.deposit > 0
+      WHERE (r.deposit > 0 OR r.status IN ('Return', 'Completed', 'Refunded'))
     `;
     const renParams = [];
     if (!isAllZones) {
-      const zoneClean = effectiveZone.replace(/zone|hub|-/gi, '').trim();
-      renQuery += ` AND (r.zone ILIKE $1 OR r.zone ILIKE $2 OR v.zone ILIKE $1 OR v.zone ILIKE $2 OR r.zone = 'Multiple Zones')`;
-      renParams.push(`%${effectiveZone}%`, `%${zoneClean}%`);
+      const zoneClean = effectiveZone.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
+      renQuery += ` AND (r.zone ILIKE $1 OR r.zone ILIKE $2 OR $3 ILIKE '%' || COALESCE(NULLIF(r.zone, ''), 'none') || '%' OR v.zone ILIKE $1 OR v.zone ILIKE $2 OR r.zone = 'Multiple Zones')`;
+      renParams.push(`%${effectiveZone}%`, `%${zoneClean}%`, effectiveZone);
     }
 
     const rentersResult = await db.query(renQuery, renParams).catch(() => ({ rows: [] }));
@@ -317,12 +323,14 @@ router.get('/deposits', async (req, res) => {
         ri.refund_amount,
         ri.result,
         ri.created_at,
-        COALESCE(r.customer_name, (SELECT rider_name FROM renters WHERE id::text = ri.reservation_key LIMIT 1), 'Evegah Rider') as customer_name,
+        COALESCE(r.customer_name, (SELECT rider_name FROM renters WHERE id::text = ri.reservation_key LIMIT 1)) as customer_name,
         COALESCE(r.mobile, (SELECT mobile FROM renters WHERE id::text = ri.reservation_key LIMIT 1), '') as mobile,
         COALESCE(r.vehicle_number, (SELECT vehicle_id FROM renters WHERE id::text = ri.reservation_key LIMIT 1), '') as vehicle_number,
-        COALESCE(r.deposit, 0) as deposit
+        COALESCE(r.deposit, 0) as deposit,
+        COALESCE(r.pickup_zone, (SELECT zone FROM renters WHERE id::text = ri.reservation_key LIMIT 1)) as zone
       FROM refund_idempotency ri
       LEFT JOIN reservations r ON (r.id::text = ri.reservation_key OR r.reservation_id = ri.reservation_key)
+      WHERE ri.result->>'status' != 'dismissed'
       ORDER BY ri.created_at DESC
     `).catch(() => ({ rows: [] }));
 
@@ -414,45 +422,64 @@ router.get('/deposits', async (req, res) => {
     renterRows.forEach(r => {
       const dep = parseFloat(r.deposit || 0);
       const cleanMob = (r.mobile || '').replace(/\D/g, '').slice(-10);
-      if (dep > 0 && r.status !== 'Dismissed' && (!cleanMob || !processedMobiles.has(cleanMob))) {
-        if (cleanMob) processedMobiles.add(cleanMob);
-        const isReturned = ['Return', 'Completed'].includes(r.status);
-        const canRefund = isReturned;
+      if (r.status === 'Dismissed') return;
 
+      // Check if this renter row has already been refunded in completedList
+      const isAlreadyCompleted = completedList.some(c => c.mobile && cleanMob && c.mobile.replace(/\D/g, '').slice(-10) === cleanMob && c.deposit === dep);
+      if (isAlreadyCompleted && r.status === 'Refunded') return;
+
+      const isReturned = ['Return', 'Completed'].includes(r.status);
+      const canRefund = isReturned;
+
+      if (dep > 0) {
         if (isReturned) {
           pendingAmount += dep;
           pendingCount++;
-        } else if (['Active Ride', 'Retain Ride', 'Active'].includes(r.status)) {
+        } else if (['Active Ride', 'Retain Ride', 'Active', 'Ongoing', 'Subscribed', 'Confirmed'].includes(r.status)) {
           totalDepositsHeld += dep;
         }
 
-        pendingList.push({
-          id: r.id,
-          reservation_id: `RET-${r.id?.toString().slice(0, 6)}`,
-          rider: {
-            name: r.rider_name || 'Rider',
-            code: `EVR-${r.id?.toString().slice(0, 6)}`,
-            avatar: ''
-          },
-          mobile: r.mobile,
-          vehicle: r.vehicle_id || '',
-          returnDate: isReturned ? (r.return_date || r.created_at || new Date()) : null,
-          bookingDate: r.rental_start_date || r.created_at,
-          deposit: dep,
-          condition: isReturned ? 'No Damage' : 'Vehicle In Ride',
-          conditionDetail: isReturned ? 'Good Condition' : 'Active Ride (Awaiting Return)',
-          deductions: 0,
-          refundAmount: dep,
-          deposit_status: isReturned ? 'Pending_Refund' : 'Held',
-          is_returned: isReturned,
-          can_refund: canRefund,
-          ride_status: r.status
-        });
+        // Avoid adding duplicate entry to pendingList
+        const alreadyInPending = pendingList.some(p => p.mobile && cleanMob && p.mobile.replace(/\D/g, '').slice(-10) === cleanMob);
+        if (!alreadyInPending) {
+          pendingList.push({
+            id: r.id,
+            reservation_id: `RET-${r.id?.toString().slice(0, 6)}`,
+            rider: {
+              name: r.rider_name || 'Rider',
+              code: `EVR-${r.id?.toString().slice(0, 6)}`,
+              avatar: ''
+            },
+            mobile: r.mobile,
+            vehicle: r.vehicle_id || '',
+            returnDate: isReturned ? (r.return_date || r.created_at || new Date()) : null,
+            bookingDate: r.rental_start_date || r.created_at,
+            deposit: dep,
+            condition: isReturned ? 'No Damage' : 'Vehicle In Ride',
+            conditionDetail: isReturned ? 'Good Condition' : 'Active Ride (Awaiting Return)',
+            deductions: 0,
+            refundAmount: dep,
+            deposit_status: isReturned ? 'Pending_Refund' : 'Held',
+            is_returned: isReturned,
+            can_refund: canRefund,
+            ride_status: r.status
+          });
+        }
       }
     });
 
     const processedTxIds = new Set(completedList.map(c => c.txId));
     refundIdemRes.rows.forEach(ri => {
+      // Exclude dummy test records with no real user or legacy Evegah Rider tag
+      if (!ri.customer_name || ri.customer_name === 'Evegah Rider') return;
+      if (!isAllZones && ri.zone) {
+        const zoneClean = effectiveZone.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
+        const zLower = ri.zone.toLowerCase();
+        const matchZone = zLower.includes(effectiveZone.toLowerCase()) || 
+                          zLower.includes(zoneClean.toLowerCase()) ||
+                          effectiveZone.toLowerCase().includes(zLower);
+        if (!matchZone) return;
+      }
       const resObj = (typeof ri.result === 'string' ? JSON.parse(ri.result) : ri.result) || {};
       const txId = resObj.tx_id || `REF-${ri.id}`;
       if (!processedTxIds.has(txId)) {
@@ -463,7 +490,7 @@ router.get('/deposits', async (req, res) => {
           id: ri.id,
           reservation_id: ri.reservation_key,
           rider: {
-            name: ri.customer_name || 'Evegah Rider',
+            name: ri.customer_name,
             code: `REF-${String(ri.id).padStart(4, '0')}`,
             avatar: ''
           },
@@ -520,7 +547,7 @@ router.delete('/deposits', async (req, res) => {
       const rRes = await db.query(`
         UPDATE reservations 
         SET deposit_status = 'Dismissed', deposit = 0, refund_amount = 0 
-        WHERE id::text = $1 OR reservation_id = $1
+        WHERE id::text = $1 OR reservation_id = $1 OR refund_tx_id = $1
       `, [idStr]).catch(() => ({ rowCount: 0 }));
       affected += rRes.rowCount || 0;
 
@@ -530,12 +557,16 @@ router.delete('/deposits', async (req, res) => {
         WHERE id::text = $1
       `, [idStr]).catch(() => ({ rowCount: 0 }));
       affected += renterRes.rowCount || 0;
+
+      const riRes = await db.query(`
+        DELETE FROM refund_idempotency 
+        WHERE id::text = $1 OR reservation_key = $1 OR result->>'tx_id' = $1
+      `, [idStr]).catch(() => ({ rowCount: 0 }));
+      affected += riRes.rowCount || 0;
     }
 
     await delByPattern('reservations:*');
     await delByPattern('renters:*');
-
-
     await delByPattern('stats:*');
 
     res.json({
@@ -559,13 +590,18 @@ router.delete('/deposits/:id', async (req, res) => {
     await db.query(`
       UPDATE reservations 
       SET deposit_status = 'Dismissed', deposit = 0, refund_amount = 0 
-      WHERE id::text = $1 OR reservation_id = $1
+      WHERE id::text = $1 OR reservation_id = $1 OR refund_tx_id = $1
     `, [idStr]).catch(() => {});
 
     await db.query(`
       UPDATE renters 
       SET deposit = 0, status = 'Dismissed' 
       WHERE id::text = $1
+    `, [idStr]).catch(() => {});
+
+    await db.query(`
+      DELETE FROM refund_idempotency 
+      WHERE id::text = $1 OR reservation_key = $1 OR result->>'tx_id' = $1
     `, [idStr]).catch(() => {});
 
     await delByPattern('reservations:*');
@@ -1417,6 +1453,7 @@ router.post('/:id/refund-deposit', async (req, res) => {
     const resolvedMethod = isCash ? 'Cash' : (isUpi ? 'Rider QR / UPI' : ((payuResult && payuResult.success) ? 'PayU' : (target.payment_mode || 'PayU')));
 
     try {
+      const targetZone = target.zone || target.pickup_zone || target.drop_zone || 'Daman SF';
       const updRes = await db.query(`
         UPDATE reservations
         SET deposit_status = 'Refunded',
@@ -1425,19 +1462,22 @@ router.post('/:id/refund-deposit', async (req, res) => {
             refund_mode = $3,
             refund_tx_id = $4,
             refund_date = NOW(),
-            return_notes = COALESCE($5, return_notes)
+            return_notes = COALESCE($5, return_notes),
+            pickup_zone = COALESCE(NULLIF(pickup_zone, ''), $7),
+            drop_zone = COALESCE(NULLIF(drop_zone, ''), $7)
         WHERE id::text = $6 OR reservation_id = $6
         RETURNING id
-      `, [refundAmt, dedAmt, resolvedMethod, finalRefundTxId, notes, id]);
+      `, [refundAmt, dedAmt, resolvedMethod, finalRefundTxId, notes, id, targetZone]);
 
       if (updRes.rows.length === 0 && isFromRenters && refundAmt > 0) {
         await db.query(`
           INSERT INTO reservations (
             reservation_id, customer_name, mobile, package_type, vehicle_number,
             deposit, status, deposit_status, refund_amount, refund_deductions,
-            refund_mode, refund_tx_id, refund_date, return_notes, returned_at, booking_source
+            refund_mode, refund_tx_id, refund_date, return_notes, returned_at, booking_source,
+            pickup_zone, drop_zone
           )
-          VALUES ($1, $2, $3, $4, $5, $6, 'Completed', 'Refunded', $7, $8, $9, $10, NOW(), $11, NOW(), 'Form')
+          VALUES ($1, $2, $3, $4, $5, $6, 'Completed', 'Refunded', $7, $8, $9, $10, NOW(), $11, NOW(), 'Form', $12, $12)
         `, [
           `RET-${String(id).slice(0, 6).toUpperCase()}`,
           target.rider_name || target.customer_name || 'Rider',
@@ -1449,9 +1489,30 @@ router.post('/:id/refund-deposit', async (req, res) => {
           dedAmt,
           resolvedMethod,
           finalRefundTxId,
-          notes || ''
+          notes || '',
+          targetZone
         ]).catch(() => {});
       }
+
+      await db.query(`
+        INSERT INTO refund_idempotency (reservation_key, refund_amount, result, created_at)
+        VALUES ($1, $2, $3, NOW())
+      `, [
+        String(target.reservation_id || target.id),
+        refundAmt,
+        JSON.stringify({
+          tx_id: finalRefundTxId,
+          status: 'succeeded',
+          deductions: dedAmt,
+          refund_date: new Date().toISOString(),
+          refund_mode: resolvedMethod,
+          refund_amount: refundAmt,
+          customer_name: target.customer_name || target.rider_name || 'Rider',
+          mobile: target.mobile,
+          vehicle_number: target.vehicle_number || target.vehicle_id,
+          zone: targetZone
+        })
+      ]).catch(() => {});
     } catch (dbErr) {
       console.warn('DB reservations refund status update error:', dbErr.message);
     }
