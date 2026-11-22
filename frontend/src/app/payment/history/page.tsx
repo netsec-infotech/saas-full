@@ -493,7 +493,7 @@ export default function PaymentHistoryPage() {
                     try {
                       const pendingPayu = records.filter(r => r.status === 'Pending' && (r.payment_method || '').includes('PayU'));
                       for (const p of pendingPayu) {
-                        await api.get(`/payments/payu/status/${p.tx_id}?ack=true`).catch(() => {});
+                        await api.get(`/payments/payu/status/${p.tx_id}`).catch(() => {});
                       }
                       await fetchPaymentHistory();
                     } catch (_) {}
@@ -885,7 +885,7 @@ export default function PaymentHistoryPage() {
                                     style={{ background: '#DCFCE7', color: '#15803D', border: '1px solid #86EFAC', fontWeight: 700 }}
                                     onClick={async () => {
                                       try {
-                                        await api.get(`/payments/payu/status/${r.tx_id}?ack=true`);
+                                        await api.get(`/payments/payu/status/${r.tx_id}`);
                                         fetchPaymentHistory();
                                       } catch (err: any) {
                                         alert('Verification notice: ' + (err.message || 'Checked'));

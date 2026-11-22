@@ -688,21 +688,196 @@ router.get('/profile', async (req, res) => {
       };
     }
 
-    // 6. Performance & Earnings Metrics (Real computation from reservations)
-    const totalRidesCount = reservations.length;
-    const totalEarningsAmount = reservations.reduce((sum, r) => sum + (parseFloat(r.fare) || 0), 0);
-    const totalDepositAmount = reservations.reduce((sum, r) => sum + (parseFloat(r.deposit) || 0), 0);
-    const totalRefundedDeposit = reservations.reduce((sum, r) => sum + (parseFloat(r.refund_amount) || 0), 0);
-    const totalDistanceKm = reservations.reduce((sum, r) => {
-      const d = parseFloat(r.distance_km) || (parseFloat(r.fare) > 200 ? 28 : 6.4);
+    // 6. Performance & Earnings Metrics (Unified computation from reservations + renters + payments)
+    let allRenterRows = [];
+    if (effectiveLast10) {
+      const qR = await db.query(
+        `SELECT * FROM renters WHERE mobile LIKE $1 ORDER BY created_at DESC`,
+        [`%${effectiveLast10}`]
+      ).catch(() => ({ rows: [] }));
+      allRenterRows = qR.rows;
+    } else if (renter) {
+      allRenterRows = [renter];
+    }
+
+    const unifiedRides = [...reservations];
+    allRenterRows.forEach(rnt => {
+      const alreadyInRes = unifiedRides.some(r => 
+        (r.reservation_id && (r.reservation_id === rnt.rider_id || r.reservation_id === rnt.id?.toString())) ||
+        (r.created_at && Math.abs(new Date(r.created_at).getTime() - new Date(rnt.created_at).getTime()) < 120000)
+      );
+      if (!alreadyInRes) {
+        unifiedRides.push({
+          id: rnt.id,
+          reservation_id: rnt.rider_id || `RIDE-${String(rnt.id).slice(0, 8)}`,
+          customer_name: rnt.rider_name,
+          mobile: rnt.mobile,
+          vehicle_number: rnt.vehicle_id || 'EVM102501',
+          battery_id: rnt.battery_id || 'BAT-GOTRI-01',
+          package_type: rnt.package_name || 'Rental Plan',
+          fare: parseFloat(rnt.rent) || 0,
+          deposit: parseFloat(rnt.deposit) || 0,
+          total_payable: parseFloat(rnt.total) || (parseFloat(rnt.rent || 0) + parseFloat(rnt.deposit || 0)),
+          total_price: parseFloat(rnt.total) || (parseFloat(rnt.rent || 0) + parseFloat(rnt.deposit || 0)),
+          payment_mode: 'Cash',
+          payment_status: 'Paid',
+          status: rnt.status === 'Return' ? 'Completed' : (['Active', 'Active Ride', 'In Ride'].includes(rnt.status) ? 'Ongoing' : rnt.status),
+          pickup_zone: rnt.zone || 'Gotri Zone',
+          pickup_datetime: rnt.rental_start_date || rnt.created_at,
+          drop_datetime: rnt.return_date,
+          created_at: rnt.rental_start_date || rnt.created_at
+        });
+      }
+    });
+
+    const totalRidesCount = unifiedRides.length;
+    const totalEarningsAmount = unifiedRides.reduce((sum, r) => sum + (parseFloat(r.fare || r.rent) || 0), 0);
+    const totalDepositAmount = unifiedRides.reduce((sum, r) => sum + (parseFloat(r.deposit) || 0), 0);
+    const totalRefundedDeposit = unifiedRides.reduce((sum, r) => sum + (parseFloat(r.refund_amount) || 0), 0);
+    const totalDistanceKm = unifiedRides.reduce((sum, r) => {
+      const d = parseFloat(r.distance_km) || (parseFloat(r.fare || r.rent) > 200 ? 28 : 6.4);
       return sum + d;
     }, 0);
 
+    // 7. Unified Transactions (PayU, Cash, Wallet, Refunds)
+    let riderTransactions = [];
+    if (effectiveLast10) {
+      const txQuery = `
+        SELECT * FROM (
+          -- PayU Payments
+          SELECT 
+            'payu_' || pp.id::text AS id,
+            pp.tx_id,
+            COALESCE(pp.payu_id, pp.bank_ref_num, pp.tx_id) AS reference_id,
+            pp.amount::numeric,
+            CASE 
+              WHEN UPPER(pp.status) = 'SUCCESS' THEN 'Successful' 
+              WHEN UPPER(pp.status) = 'PENDING' THEN 'Pending' 
+              WHEN UPPER(pp.status) IN ('DROPPED', 'USER DROPPED') OR pp.error_message ILIKE '%dropped%' THEN 'User Dropped'
+              ELSE 'Failed' 
+            END AS status,
+            'PayU' AS payment_method,
+            'Credit' AS type,
+            COALESCE(pp.purpose, 'Ride Payment') AS title,
+            COALESCE(pp.purpose, 'PayU India') AS subtitle,
+            COALESCE(pp.purpose, 'Ride Payment') AS purpose,
+            pp.created_at
+          FROM payu_payments pp
+          WHERE pp.mobile LIKE $1
+
+          UNION ALL
+
+          -- Reservations Cash Payments
+          SELECT
+            'res_' || r.id::text AS id,
+            COALESCE(r.cash_voucher_number, r.transaction_id, 'CSH-' || SUBSTRING(r.id::text, 1, 8)) AS tx_id,
+            COALESCE(r.cash_voucher_number, r.transaction_id, r.reservation_id) AS reference_id,
+            COALESCE(NULLIF(r.total_payable, 0), NULLIF(ren.total, 0), (COALESCE(r.fare, ren.rent, 0) + COALESCE(r.deposit, ren.deposit, 0)), r.deposit, r.fare, 0)::numeric AS amount,
+            'Successful' AS status,
+            'Cash' AS payment_method,
+            'Credit' AS type,
+            CASE 
+              WHEN (COALESCE(r.fare, ren.rent, 0) > 0 AND COALESCE(r.deposit, ren.deposit, 0) > 0) THEN 'Ride Booking & Deposit'
+              WHEN COALESCE(r.fare, ren.rent, 0) > 0 THEN 'Ride Booking (' || COALESCE(r.package_type, ren.package_name, 'Rental Plan') || ')'
+              ELSE 'Security Deposit'
+            END AS title,
+            'Cash Counter Payment' AS subtitle,
+            'Ride Booking' AS purpose,
+            r.created_at
+          FROM reservations r
+          LEFT JOIN LATERAL (
+            SELECT rent, deposit, total, package_name FROM renters ren WHERE ren.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(r.mobile, '\\D', '', 'g'), 10) ORDER BY ren.created_at DESC LIMIT 1
+          ) ren ON true
+          WHERE r.mobile LIKE $1
+            AND r.payment_status = 'Paid'
+            AND (r.payment_mode ILIKE '%cash%' OR r.payment_mode IS NULL)
+            AND NOT EXISTS (
+              SELECT 1 FROM payu_payments pp 
+              WHERE (pp.tx_id = r.transaction_id OR pp.reservation_id = r.id::text OR pp.reservation_id = r.reservation_id)
+                AND UPPER(pp.status) = 'SUCCESS'
+            )
+
+          UNION ALL
+
+          -- Direct / Cash Renter Registrations
+          SELECT
+            'rnt_' || ren.id::text AS id,
+            COALESCE(ren.rider_id, 'CSH-REG-' || SUBSTRING(ren.id::text, 1, 8)) AS tx_id,
+            COALESCE(ren.rider_id, ren.id::text) AS reference_id,
+            COALESCE(NULLIF(ren.total, 0), (COALESCE(ren.rent, 0) + COALESCE(ren.deposit, 0)), ren.deposit, ren.rent, 0)::numeric AS amount,
+            'Successful' AS status,
+            'Cash' AS payment_method,
+            'Credit' AS type,
+            CASE 
+              WHEN COALESCE(ren.rent, 0) > 0 AND COALESCE(ren.deposit, 0) > 0 THEN 'Counter Registration & Deposit'
+              WHEN COALESCE(ren.rent, 0) > 0 THEN 'Counter Rental Plan'
+              ELSE 'Counter Security Deposit'
+            END AS title,
+            'Cash Registration' AS subtitle,
+            'Counter Registration' AS purpose,
+            ren.created_at
+          FROM renters ren
+          WHERE ren.mobile LIKE $1
+            AND (COALESCE(ren.rent, 0) > 0 OR COALESCE(ren.deposit, 0) > 0 OR COALESCE(ren.total, 0) > 0)
+            AND NOT EXISTS (
+              SELECT 1 FROM payu_payments pp 
+              WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ren.mobile, '\\D', '', 'g'), 10)
+                AND UPPER(pp.status) = 'SUCCESS'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM reservations res
+              WHERE res.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ren.mobile, '\\D', '', 'g'), 10)
+                AND res.payment_status = 'Paid'
+            )
+
+          UNION ALL
+
+          -- Wallet Transactions
+          SELECT 
+            'wt_' || wt.id::text AS id,
+            COALESCE(wt.transaction_id, 'WLT-' || wt.id::text) AS tx_id,
+            COALESCE(wt.transaction_id, 'WLT-' || wt.id::text) AS reference_id,
+            wt.amount::numeric,
+            CASE WHEN UPPER(wt.status) IN ('SUCCESS', 'SUCCESSFUL') THEN 'Successful' ELSE 'Failed' END AS status,
+            'Wallet' AS payment_method,
+            CASE WHEN LOWER(wt.type) = 'debit' THEN 'Debit' ELSE 'Credit' END AS type,
+            COALESCE(wt.title, 'Wallet Transaction') AS title,
+            COALESCE(wt.subtitle, 'Evegah Wallet') AS subtitle,
+            COALESCE(wt.title, wt.subtitle, 'Wallet Transaction') AS purpose,
+            wt.created_at
+          FROM wallet_transactions wt
+          WHERE wt.mobile LIKE $1
+
+          UNION ALL
+
+          -- Completed Deposit Refunds
+          SELECT 
+            'ref_' || id::text AS id,
+            COALESCE(refund_tx_id, 'REF-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
+            reservation_id AS reference_id,
+            COALESCE(refund_amount, deposit, 0)::numeric AS amount,
+            'Successful' AS status,
+            COALESCE(refund_mode, 'Cash') AS payment_method,
+            'Debit' AS type,
+            'Security Deposit Refund' AS title,
+            'Deposit Refund' AS subtitle,
+            'Deposit Refund' AS purpose,
+            COALESCE(refund_date, returned_at, created_at) AS created_at
+          FROM reservations
+          WHERE mobile LIKE $1 AND deposit_status = 'Refunded' AND COALESCE(refund_amount, deposit, 0) > 0
+        ) all_tx
+        ORDER BY created_at DESC
+        LIMIT 50
+      `;
+      const txQ = await db.query(txQuery, [`%${effectiveLast10}`]).catch(() => ({ rows: [] }));
+      riderTransactions = txQ.rows;
+    }
+
     // Daily breakdown for charts
     const dailyMap = new Map();
-    reservations.forEach(r => {
-      const dStr = new Date(r.created_at || r.reservation_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-      const fare = parseFloat(r.fare) || 0;
+    unifiedRides.forEach(r => {
+      const dStr = new Date(r.created_at || r.pickup_datetime || r.reservation_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      const fare = parseFloat(r.fare || r.rent) || 0;
       const rideDist = parseFloat(r.distance_km) || (fare > 200 ? 28 : 6.4);
       if (!dailyMap.has(dStr)) {
         dailyMap.set(dStr, { date: dStr, rides: 0, earnings: 0, distance: 0, co2: 0, completed: 0, cancelled: 0, rating: '4.9 ★' });
@@ -717,17 +892,21 @@ router.get('/profile', async (req, res) => {
       item.rating = '4.9 ★';
     });
 
-    const chartDailyData = Array.from(dailyMap.values()).reverse();
+    // Also include transactions in daily breakdown
+    riderTransactions.forEach(tx => {
+      if (tx.type === 'Credit' && ['Successful', 'Success'].includes(tx.status)) {
+        const dStr = new Date(tx.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+        if (!dailyMap.has(dStr)) {
+          dailyMap.set(dStr, { date: dStr, rides: 1, earnings: parseFloat(tx.amount) || 0, distance: 28, co2: 2.66, completed: 1, cancelled: 0, rating: '4.9 ★' });
+        }
+      }
+    });
 
-    // 7. Wallet transactions
-    const txQ = await db.query(
-      `SELECT * FROM wallet_transactions WHERE mobile LIKE $1 ORDER BY created_at DESC LIMIT 50`,
-      [`%${effectiveLast10}`]
-    ).catch(() => ({ rows: [] }));
+    const chartDailyData = Array.from(dailyMap.values()).reverse();
 
     // 8. Recent Activity Feed (Real timeline generated from DB events)
     const activities = [];
-    reservations.slice(0, 5).forEach(r => {
+    unifiedRides.slice(0, 5).forEach(r => {
       activities.push({
         type: r.status === 'Ongoing' ? 'ride_started' : (r.status === 'Completed' ? 'ride_completed' : 'booking_confirmed'),
         title: r.status === 'Ongoing' ? `Started Ride (${r.vehicle_number || r.reservation_id})` : (r.status === 'Completed' ? `Completed Ride #${r.reservation_id}` : `Ride Booking Confirmed #${r.reservation_id}`),
@@ -737,13 +916,13 @@ router.get('/profile', async (req, res) => {
       });
     });
 
-    txQ.rows.slice(0, 3).forEach(tx => {
+    riderTransactions.slice(0, 3).forEach(tx => {
       activities.push({
-        type: 'wallet_tx',
-        title: `${tx.title || 'Wallet Transaction'}: ₹${tx.amount} (${tx.type})`,
+        type: 'payment_tx',
+        title: `${tx.title || 'Payment'}: ₹${tx.amount} (${tx.payment_method} - ${tx.status})`,
         time: formatDate(tx.created_at),
-        color: tx.type === 'Credit' ? 'green' : 'yellow',
-        zone: 'Online Gateway'
+        color: tx.status === 'Successful' ? 'green' : (tx.status === 'User Dropped' ? 'red' : 'yellow'),
+        zone: tx.payment_method === 'Cash' ? 'Counter Cash Desk' : 'PayU Gateway'
       });
     });
 
@@ -845,8 +1024,8 @@ router.get('/profile', async (req, res) => {
         },
         recent_activity: activities.slice(0, 6),
         badges: badges,
-        rides: reservations,
-        transactions: txQ.rows
+        rides: unifiedRides,
+        transactions: riderTransactions
       }
     };
     await setCache(profileCacheKey, profilePayload, 60);

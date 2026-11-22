@@ -126,6 +126,7 @@ router.get('/', async (req, res) => {
           CASE 
             WHEN UPPER(pp.status) = 'SUCCESS' THEN 'Successful'
             WHEN UPPER(pp.status) = 'PENDING' THEN 'Pending'
+            WHEN UPPER(pp.status) IN ('DROPPED', 'USER DROPPED') OR pp.error_message ILIKE '%dropped%' THEN 'User Dropped'
             ELSE 'Failed'
           END AS status,
           'PayU India' AS payment_method,
@@ -248,53 +249,63 @@ router.get('/', async (req, res) => {
 
         -- 6. Direct / Cash / Offline Booking Payments
         SELECT
-          'res_' || id::text AS id,
-          COALESCE(cash_voucher_number, transaction_id, 'CSH-VCHR-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
-          COALESCE(cash_voucher_number, transaction_id, reservation_id) AS reference_id,
-          COALESCE(customer_name, 'Rider') AS rider_name,
-          COALESCE(mobile, '') AS mobile,
-          COALESCE(fare, 0)::numeric AS rent_amount,
-          COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total_payable, 0), (COALESCE(fare, 0) + COALESCE(deposit, 0)), deposit, fare, 0)::numeric AS amount,
+          'res_' || reservations.id::text AS id,
+          COALESCE(reservations.cash_voucher_number, reservations.transaction_id, 'CSH-VCHR-' || SUBSTRING(reservations.id::text, 1, 8)) AS tx_id,
+          COALESCE(reservations.cash_voucher_number, reservations.transaction_id, reservations.reservation_id) AS reference_id,
+          COALESCE(reservations.customer_name, ren.rider_name, 'Rider') AS rider_name,
+          COALESCE(reservations.mobile, ren.mobile, '') AS mobile,
+          COALESCE(reservations.fare, ren.rent, 0)::numeric AS rent_amount,
+          COALESCE(reservations.deposit, ren.deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(reservations.total_payable, 0), NULLIF(ren.total, 0), (COALESCE(reservations.fare, ren.rent, 0) + COALESCE(reservations.deposit, ren.deposit, 0)), reservations.deposit, reservations.fare, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           CASE 
-            WHEN payment_mode ILIKE '%cash%' THEN 'Cash'
-            ELSE COALESCE(payment_mode, 'Cash')
+            WHEN reservations.payment_mode ILIKE '%cash%' THEN 'Cash'
+            ELSE COALESCE(reservations.payment_mode, 'Cash')
           END AS payment_method,
           CASE 
-            WHEN COALESCE(fare, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Ride Booking & Deposit'
-            WHEN COALESCE(fare, 0) > 0 THEN 'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')'
+            WHEN (COALESCE(reservations.fare, ren.rent, 0) > 0 AND COALESCE(reservations.deposit, ren.deposit, 0) > 0) THEN 'Ride Booking & Deposit'
+            WHEN COALESCE(reservations.fare, ren.rent, 0) > 0 THEN 'Ride Booking (' || COALESCE(reservations.package_type, ren.package_name, 'Rental Plan') || ')'
             ELSE 'Security Deposit'
           END AS purpose,
           COALESCE(
-            NULLIF(pickup_zone, ''),
-            NULLIF(drop_zone, ''),
-            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            NULLIF(reservations.pickup_zone, ''),
+            NULLIF(reservations.drop_zone, ''),
+            ren.zone,
             'Gotri Zone'
           ) AS zone,
-          created_at
+          reservations.created_at
         FROM reservations
-        WHERE payment_status = 'Paid' 
-          AND (COALESCE(fare, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_payable, 0) > 0)
-          AND (payment_mode IS NULL OR payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
+        LEFT JOIN LATERAL (
+          SELECT rent, deposit, total, rider_name, mobile, zone, package_name
+          FROM renters r
+          WHERE r.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10)
+          ORDER BY r.created_at DESC
+          LIMIT 1
+        ) ren ON true
+        WHERE reservations.payment_status = 'Paid' 
+          AND (COALESCE(reservations.fare, 0) > 0 OR COALESCE(reservations.deposit, 0) > 0 OR COALESCE(reservations.total_payable, 0) > 0 OR COALESCE(ren.rent, 0) > 0 OR COALESCE(ren.deposit, 0) > 0)
+          AND (reservations.payment_mode IS NULL OR reservations.payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
-            WHERE pp.tx_id = reservations.transaction_id 
+            WHERE (pp.tx_id = reservations.transaction_id 
                OR pp.reservation_id = reservations.id::text 
-               OR pp.reservation_id = reservations.reservation_id
+               OR pp.reservation_id = reservations.reservation_id)
+              AND UPPER(pp.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM icici_payments ip 
-            WHERE ip.tx_id = reservations.transaction_id 
+            WHERE (ip.tx_id = reservations.transaction_id 
                OR ip.reservation_id = reservations.id::text 
-               OR ip.reservation_id = reservations.reservation_id
+               OR ip.reservation_id = reservations.reservation_id)
+              AND UPPER(ip.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM phonepe_payments ph 
-            WHERE ph.tx_id = reservations.transaction_id 
+            WHERE (ph.tx_id = reservations.transaction_id 
                OR ph.reservation_id = reservations.id::text 
-               OR ph.reservation_id = reservations.reservation_id
+               OR ph.reservation_id = reservations.reservation_id)
+              AND UPPER(ph.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM wallet_transactions wt 
@@ -305,34 +316,35 @@ router.get('/', async (req, res) => {
 
         -- 7. Direct / Cash Renter Registration Payments
         SELECT
-          'rnt_' || id::text AS id,
-          COALESCE(rider_id, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
-          COALESCE(rider_id, id::text) AS reference_id,
-          COALESCE(rider_name, 'Rider') AS rider_name,
-          COALESCE(mobile, '') AS mobile,
-          COALESCE(rent, 0)::numeric AS rent_amount,
-          COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          'rnt_' || renters.id::text AS id,
+          COALESCE(renters.rider_id, 'CSH-REG-' || SUBSTRING(renters.id::text, 1, 8)) AS tx_id,
+          COALESCE(renters.rider_id, renters.id::text) AS reference_id,
+          COALESCE(renters.rider_name, 'Rider') AS rider_name,
+          COALESCE(renters.mobile, '') AS mobile,
+          COALESCE(renters.rent, 0)::numeric AS rent_amount,
+          COALESCE(renters.deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(renters.total, 0), (COALESCE(renters.rent, 0) + COALESCE(renters.deposit, 0)), renters.deposit, renters.rent, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           'Cash' AS payment_method,
           CASE 
-            WHEN COALESCE(rent, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Counter Registration & Deposit'
-            WHEN COALESCE(rent, 0) > 0 THEN 'Counter Rental Plan'
+            WHEN COALESCE(renters.rent, 0) > 0 AND COALESCE(renters.deposit, 0) > 0 THEN 'Counter Registration & Deposit'
+            WHEN COALESCE(renters.rent, 0) > 0 THEN 'Counter Rental Plan'
             ELSE 'Counter Security Deposit'
           END AS purpose,
-          COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
-          created_at
+          COALESCE(NULLIF(renters.zone, ''), 'Gotri Zone') AS zone,
+          renters.created_at
         FROM renters
-        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total, 0) > 0)
-          AND booking_source = 'Form'
+        WHERE (COALESCE(renters.rent, 0) > 0 OR COALESCE(renters.deposit, 0) > 0 OR COALESCE(renters.total, 0) > 0)
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
             WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND UPPER(pp.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM icici_payments ip 
             WHERE ip.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND UPPER(ip.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM reservations res
@@ -796,6 +808,7 @@ router.get('/export', async (req, res) => {
           CASE 
             WHEN UPPER(pp.status) = 'SUCCESS' THEN 'Successful'
             WHEN UPPER(pp.status) = 'PENDING' THEN 'Pending'
+            WHEN UPPER(pp.status) IN ('DROPPED', 'USER DROPPED') OR pp.error_message ILIKE '%dropped%' THEN 'User Dropped'
             ELSE 'Failed'
           END AS status,
           'PayU India' AS payment_method,
@@ -918,53 +931,63 @@ router.get('/export', async (req, res) => {
 
         -- 6. Direct / Cash / Offline Booking Payments
         SELECT
-          'res_' || id::text AS id,
-          COALESCE(cash_voucher_number, transaction_id, 'CSH-VCHR-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
-          COALESCE(cash_voucher_number, transaction_id, reservation_id) AS reference_id,
-          COALESCE(customer_name, 'Rider') AS rider_name,
-          COALESCE(mobile, '') AS mobile,
-          COALESCE(fare, 0)::numeric AS rent_amount,
-          COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total_payable, 0), (COALESCE(fare, 0) + COALESCE(deposit, 0)), deposit, fare, 0)::numeric AS amount,
+          'res_' || reservations.id::text AS id,
+          COALESCE(reservations.cash_voucher_number, reservations.transaction_id, 'CSH-VCHR-' || SUBSTRING(reservations.id::text, 1, 8)) AS tx_id,
+          COALESCE(reservations.cash_voucher_number, reservations.transaction_id, reservations.reservation_id) AS reference_id,
+          COALESCE(reservations.customer_name, ren.rider_name, 'Rider') AS rider_name,
+          COALESCE(reservations.mobile, ren.mobile, '') AS mobile,
+          COALESCE(reservations.fare, ren.rent, 0)::numeric AS rent_amount,
+          COALESCE(reservations.deposit, ren.deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(reservations.total_payable, 0), NULLIF(ren.total, 0), (COALESCE(reservations.fare, ren.rent, 0) + COALESCE(reservations.deposit, ren.deposit, 0)), reservations.deposit, reservations.fare, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           CASE 
-            WHEN payment_mode ILIKE '%cash%' THEN 'Cash'
-            ELSE COALESCE(payment_mode, 'Cash')
+            WHEN reservations.payment_mode ILIKE '%cash%' THEN 'Cash'
+            ELSE COALESCE(reservations.payment_mode, 'Cash')
           END AS payment_method,
           CASE 
-            WHEN COALESCE(fare, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Ride Booking & Deposit'
-            WHEN COALESCE(fare, 0) > 0 THEN 'Ride Booking (' || COALESCE(package_type, 'Rental Plan') || ')'
+            WHEN (COALESCE(reservations.fare, ren.rent, 0) > 0 AND COALESCE(reservations.deposit, ren.deposit, 0) > 0) THEN 'Ride Booking & Deposit'
+            WHEN COALESCE(reservations.fare, ren.rent, 0) > 0 THEN 'Ride Booking (' || COALESCE(reservations.package_type, ren.package_name, 'Rental Plan') || ')'
             ELSE 'Security Deposit'
           END AS purpose,
           COALESCE(
-            NULLIF(pickup_zone, ''),
-            NULLIF(drop_zone, ''),
-            (SELECT zone FROM renters WHERE mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10) AND zone IS NOT NULL AND zone != '' ORDER BY created_at DESC LIMIT 1),
+            NULLIF(reservations.pickup_zone, ''),
+            NULLIF(reservations.drop_zone, ''),
+            ren.zone,
             'Gotri Zone'
           ) AS zone,
-          created_at
+          reservations.created_at
         FROM reservations
-        WHERE payment_status = 'Paid' 
-          AND (COALESCE(fare, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total_payable, 0) > 0)
-          AND (payment_mode IS NULL OR payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
+        LEFT JOIN LATERAL (
+          SELECT rent, deposit, total, rider_name, mobile, zone, package_name
+          FROM renters r
+          WHERE r.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(reservations.mobile, '\\D', '', 'g'), 10)
+          ORDER BY r.created_at DESC
+          LIMIT 1
+        ) ren ON true
+        WHERE reservations.payment_status = 'Paid' 
+          AND (COALESCE(reservations.fare, 0) > 0 OR COALESCE(reservations.deposit, 0) > 0 OR COALESCE(reservations.total_payable, 0) > 0 OR COALESCE(ren.rent, 0) > 0 OR COALESCE(ren.deposit, 0) > 0)
+          AND (reservations.payment_mode IS NULL OR reservations.payment_mode NOT IN ('PayU', 'PayU India', 'ICICI UPI', 'UPI', 'Wallet', 'Evegah Wallet', 'PhonePe'))
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
-            WHERE pp.tx_id = reservations.transaction_id 
+            WHERE (pp.tx_id = reservations.transaction_id 
                OR pp.reservation_id = reservations.id::text 
-               OR pp.reservation_id = reservations.reservation_id
+               OR pp.reservation_id = reservations.reservation_id)
+              AND UPPER(pp.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM icici_payments ip 
-            WHERE ip.tx_id = reservations.transaction_id 
+            WHERE (ip.tx_id = reservations.transaction_id 
                OR ip.reservation_id = reservations.id::text 
-               OR ip.reservation_id = reservations.reservation_id
+               OR ip.reservation_id = reservations.reservation_id)
+              AND UPPER(ip.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM phonepe_payments ph 
-            WHERE ph.tx_id = reservations.transaction_id 
+            WHERE (ph.tx_id = reservations.transaction_id 
                OR ph.reservation_id = reservations.id::text 
-               OR ph.reservation_id = reservations.reservation_id
+               OR ph.reservation_id = reservations.reservation_id)
+              AND UPPER(ph.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM wallet_transactions wt 
@@ -975,34 +998,35 @@ router.get('/export', async (req, res) => {
 
         -- 7. Direct / Cash Renter Registration Payments
         SELECT
-          'rnt_' || id::text AS id,
-          COALESCE(rider_id, 'CSH-REG-' || SUBSTRING(id::text, 1, 8)) AS tx_id,
-          COALESCE(rider_id, id::text) AS reference_id,
-          COALESCE(rider_name, 'Rider') AS rider_name,
-          COALESCE(mobile, '') AS mobile,
-          COALESCE(rent, 0)::numeric AS rent_amount,
-          COALESCE(deposit, 0)::numeric AS deposit_amount,
-          COALESCE(NULLIF(total, 0), (COALESCE(rent, 0) + COALESCE(deposit, 0)), deposit, rent, 0)::numeric AS amount,
+          'rnt_' || renters.id::text AS id,
+          COALESCE(renters.rider_id, 'CSH-REG-' || SUBSTRING(renters.id::text, 1, 8)) AS tx_id,
+          COALESCE(renters.rider_id, renters.id::text) AS reference_id,
+          COALESCE(renters.rider_name, 'Rider') AS rider_name,
+          COALESCE(renters.mobile, '') AS mobile,
+          COALESCE(renters.rent, 0)::numeric AS rent_amount,
+          COALESCE(renters.deposit, 0)::numeric AS deposit_amount,
+          COALESCE(NULLIF(renters.total, 0), (COALESCE(renters.rent, 0) + COALESCE(renters.deposit, 0)), renters.deposit, renters.rent, 0)::numeric AS amount,
           'Credit' AS type,
           'Successful' AS status,
           'Cash' AS payment_method,
           CASE 
-            WHEN COALESCE(rent, 0) > 0 AND COALESCE(deposit, 0) > 0 THEN 'Counter Registration & Deposit'
-            WHEN COALESCE(rent, 0) > 0 THEN 'Counter Rental Plan'
+            WHEN COALESCE(renters.rent, 0) > 0 AND COALESCE(renters.deposit, 0) > 0 THEN 'Counter Registration & Deposit'
+            WHEN COALESCE(renters.rent, 0) > 0 THEN 'Counter Rental Plan'
             ELSE 'Counter Security Deposit'
           END AS purpose,
-          COALESCE(NULLIF(zone, ''), 'Gotri Zone') AS zone,
-          created_at
+          COALESCE(NULLIF(renters.zone, ''), 'Gotri Zone') AS zone,
+          renters.created_at
         FROM renters
-        WHERE (COALESCE(rent, 0) > 0 OR COALESCE(deposit, 0) > 0 OR COALESCE(total, 0) > 0)
-          AND booking_source = 'Form'
+        WHERE (COALESCE(renters.rent, 0) > 0 OR COALESCE(renters.deposit, 0) > 0 OR COALESCE(renters.total, 0) > 0)
           AND NOT EXISTS (
             SELECT 1 FROM payu_payments pp 
             WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND UPPER(pp.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM icici_payments ip 
             WHERE ip.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(renters.mobile, '\\D', '', 'g'), 10)
+              AND UPPER(ip.status) = 'SUCCESS'
           )
           AND NOT EXISTS (
             SELECT 1 FROM reservations res

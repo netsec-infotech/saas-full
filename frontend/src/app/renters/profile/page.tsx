@@ -1292,6 +1292,12 @@ function RiderProfileContent() {
           setKycEditName(p.rider_name);
         }
         if (p.kyc_status) setKycStatus(p.kyc_status);
+        if (p.rides && Array.isArray(p.rides) && p.rides.length > 0) {
+          setRiderRides(p.rides);
+        }
+        if (p.transactions && Array.isArray(p.transactions) && p.transactions.length > 0) {
+          setUserWalletTxs(p.transactions);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch rider profile:', err);
@@ -1314,9 +1320,17 @@ function RiderProfileContent() {
         }
         setRiderRides(rList);
       }
-      const txRes: any = await api.get(`/wallet/transactions?mobile=${encodeURIComponent(cleanMob || riderMobile)}${qZone}`);
-      if (txRes && (txRes.data || Array.isArray(txRes))) {
-        setUserWalletTxs(txRes.data || txRes || []);
+      if (cleanMob) {
+        const phRes: any = await api.get(`/payments/history?search=${encodeURIComponent(cleanMob)}&limit=50`).catch(() => null);
+        const phData = phRes?.data || phRes?.records || (Array.isArray(phRes) ? phRes : null);
+        if (phData && Array.isArray(phData) && phData.length > 0) {
+          setUserWalletTxs(phData);
+        } else {
+          const txRes: any = await api.get(`/wallet/transactions?mobile=${encodeURIComponent(cleanMob || riderMobile)}${qZone}`).catch(() => null);
+          if (txRes && (txRes.data || Array.isArray(txRes))) {
+            setUserWalletTxs(txRes.data || txRes || []);
+          }
+        }
       }
     } catch (e) {
       console.error('Failed to fetch rider rides/txs:', e);
@@ -2611,29 +2625,51 @@ function RiderProfileContent() {
                             </td>
                           </tr>
                         ) : (
-                          paginatedTxs.map((tx: any, idx: number) => (
-                            <tr key={tx.id || idx}>
-                              <td style={{ fontWeight: 700, color: 'var(--ink)' }}>{formatCleanDateTime(tx.created_at || tx.date)}</td>
-                              <td>
-                                <span className={`pill-badge ${tx.type === 'Credit' ? 'pill-green' : 'pill-purple'}`}>
-                                  {tx.type || 'Credit'}
-                                </span>
-                              </td>
-                              <td>
-                                <div style={{ fontWeight: 800, color: 'var(--ink)' }}>{tx.title || 'Wallet Transaction'}</div>
-                                <div style={{ fontSize: '11px', color: 'var(--ink-lo)', fontWeight: 600 }}>{tx.subtitle || tx.payment_method || ''}</div>
-                              </td>
-                              <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--ink)' }}>
-                                {tx.transaction_id || `TXN-${tx.id || idx + 1}`}
-                              </td>
-                              <td style={{ fontWeight: 800, color: tx.type === 'Credit' ? 'var(--green-dark)' : 'var(--red)' }}>
-                                {tx.type === 'Credit' ? '+' : '-'}₹{(Number(tx.amount) || 0).toFixed(2)}
-                              </td>
-                              <td>
-                                <span className="pill-badge pill-green">{tx.status || 'Success'}</span>
-                              </td>
-                            </tr>
-                          ))
+                          paginatedTxs.map((tx: any, idx: number) => {
+                            const isSucc = ['Success', 'Successful'].includes(tx.status);
+                            const isDrop = ['User Dropped', 'Dropped'].includes(tx.status);
+                            const isFail = ['Failed', 'Cancelled', 'Refund_Failed'].includes(tx.status);
+                            const method = tx.payment_method || tx.subtitle || '';
+                            const isCash = method.toLowerCase().includes('cash');
+                            const isPayU = method.toLowerCase().includes('payu');
+
+                            return (
+                              <tr key={tx.id || idx}>
+                                <td style={{ fontWeight: 700, color: 'var(--ink)' }}>{formatCleanDateTime(tx.created_at || tx.date)}</td>
+                                <td>
+                                  <span className={`pill-badge ${tx.type === 'Credit' ? 'pill-green' : 'pill-purple'}`}>
+                                    {tx.type || 'Credit'}
+                                  </span>
+                                </td>
+                                <td>
+                                  <div style={{ fontWeight: 800, color: 'var(--ink)' }}>{tx.title || tx.purpose || 'Transaction'}</div>
+                                  <div style={{ fontSize: '11px', fontWeight: 700, marginTop: '2px' }}>
+                                    {isCash ? (
+                                      <span style={{ color: '#16A34A' }}>💵 Cash</span>
+                                    ) : isPayU ? (
+                                      <span style={{ color: '#2563EB' }}>💳 PayU</span>
+                                    ) : (
+                                      <span style={{ color: 'var(--ink-lo)' }}>{method || 'Direct'}</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--ink)' }}>
+                                  {tx.reference_id || tx.tx_id || tx.transaction_id || `TXN-${tx.id || idx + 1}`}
+                                </td>
+                                <td style={{ fontWeight: 800, color: tx.type === 'Credit' ? 'var(--green-dark)' : 'var(--red)' }}>
+                                  {tx.type === 'Credit' ? '+' : '-'}₹{(Number(tx.amount) || 0).toFixed(2)}
+                                </td>
+                                <td>
+                                  <span 
+                                    className={`pill-badge ${isSucc ? 'pill-green' : (isDrop || isFail ? 'pill-red' : 'pill-yellow')}`}
+                                    style={isDrop || isFail ? { background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5' } : undefined}
+                                  >
+                                    {tx.status || 'Successful'}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -2975,7 +3011,7 @@ function RiderProfileContent() {
                             <td style={{ fontWeight: 700, color: 'var(--ink)' }}>{r.vehicle_id || r.vehicle_model || 'EVM102501'}</td>
                             <td>{r.pickup_zone || riderZone}</td>
                             <td style={{ fontSize: '12px', fontWeight: 600 }}>{formatCleanDateTime(r.pickup_datetime || r.reservation_date)}</td>
-                            <td style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{r.total_price || r.fare || '1,497.00'}</td>
+                            <td style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{Number(r.total_price || r.total || r.total_payable || r.fare || r.rent || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                             <td>
                               <span className={`pill-badge ${(r.status === 'Active Ride' || r.status === 'Ongoing') ? 'pill-green' : 'pill-purple'}`}>
                                 {r.status || 'Confirmed'}
@@ -3360,9 +3396,9 @@ function RiderProfileContent() {
               </div>
               <div style={{ background: 'linear-gradient(135deg, var(--brand-50) 0%, var(--brand-100) 100%)', border: '1.5px solid var(--brand-200)', borderRadius: '12px', padding: '14px 16px' }}>
                 <div style={{ fontSize: '10.5px', fontWeight: 900, color: 'var(--brand)', textTransform: 'uppercase', marginBottom: '10px', letterSpacing: '0.5px' }}>Billing Summary</div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '6px', fontWeight: 600 }}><span>Rental Fare:</span><span style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{selectedBooking.fare || '1,497.00'}</span></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '6px', fontWeight: 600 }}><span>Security Deposit:</span><span style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{selectedBooking.deposit || '2,000.00'}</span></div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 900, color: 'var(--brand)', borderTop: '1px dashed var(--brand-200)', paddingTop: '10px', letterSpacing: '-0.3px' }}><span>Total:</span><span>₹{selectedBooking.total_price || selectedBooking.fare || '1,497.00'}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '6px', fontWeight: 600 }}><span>Rental Fare:</span><span style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{Number(selectedBooking.fare || selectedBooking.rent || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-mid)', marginBottom: '6px', fontWeight: 600 }}><span>Security Deposit:</span><span style={{ fontWeight: 800, color: 'var(--ink)' }}>₹{Number(selectedBooking.deposit || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 900, color: 'var(--brand)', borderTop: '1px dashed var(--brand-200)', paddingTop: '10px', letterSpacing: '-0.3px' }}><span>Total:</span><span>₹{Number(selectedBooking.total_price || selectedBooking.total || selectedBooking.total_payable || (Number(selectedBooking.fare || selectedBooking.rent || 0) + Number(selectedBooking.deposit || 0))).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span></div>
               </div>
             </div>
             <div className="rp-modal-ft">

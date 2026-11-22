@@ -790,12 +790,18 @@ async function verifyPayUPaymentWithGateway(txnid) {
       const rawSt = (tx.status || '').toLowerCase();
       const unmappedSt = (tx.unmappedstatus || '').toLowerCase();
       const isCaptured = rawSt === 'success' || rawSt === 'captured' || unmappedSt === 'captured';
+      const isFailed = rawSt === 'failure' || rawSt === 'failed' || ['dropped', 'userdropped', 'failed', 'bounced', 'usercancelled', 'cancelled', 'auto_refunded'].includes(unmappedSt);
+      const errorMsg = tx.error_Message || tx.field9 || (['dropped', 'userdropped'].includes(unmappedSt) ? 'Transaction was marked as dropped' : (isFailed ? 'Payment failed at gateway' : null));
+
       return {
         verified: true,
-        status: isCaptured ? 'Success' : (rawSt === 'failure' || rawSt === 'failed' ? 'Failed' : 'Pending'),
+        status: isCaptured ? 'Success' : (isFailed ? 'Failed' : 'Pending'),
+        unmappedStatus: unmappedSt,
+        isDropped: ['dropped', 'userdropped'].includes(unmappedSt),
         payuId: tx.mihpayid && tx.mihpayid !== 'Not Found' ? String(tx.mihpayid) : null,
         bankRefNum: tx.bank_ref_num || tx.Merchant_UTR || null,
         amount: parseFloat(tx.amt || tx.transaction_amount || 0),
+        errorMsg,
         raw: tx
       };
     }
@@ -816,22 +822,24 @@ router.get('/status/:txnid', async (req, res) => {
 
     let payment = result.rows[0];
 
-    // Auto-verify with PayU if still Pending or if ack/verify requested
-    const shouldVerify = payment.status === 'Pending' || req.query.ack === 'true' || req.query.verify === 'true';
-    if (shouldVerify) {
-      const verifyRes = await verifyPayUPaymentWithGateway(txnid);
-      const isGatewaySuccess = verifyRes.verified && verifyRes.status === 'Success';
-      const isManualAck = req.query.ack === 'true' || req.query.verify === 'true';
+    // Auto-verify with PayU gateway directly
+    const verifyRes = await verifyPayUPaymentWithGateway(txnid);
 
-      if (isGatewaySuccess || isManualAck) {
+    if (verifyRes && verifyRes.verified) {
+      if (verifyRes.status === 'Success') {
         const payuTxId = verifyRes.payuId || payment.payu_id || `PAYU-${Date.now()}`;
         const bankRef = verifyRes.bankRefNum || payment.bank_ref_num || null;
 
         await db.query(`
           UPDATE payu_payments 
-          SET status = 'Success', payu_id = COALESCE($1, payu_id), bank_ref_num = COALESCE($2, bank_ref_num), raw_response = $3, updated_at = NOW() 
+          SET status = 'Success',
+              payu_id = COALESCE($1, payu_id),
+              bank_ref_num = COALESCE($2, bank_ref_num),
+              error_message = NULL,
+              raw_response = $3,
+              updated_at = NOW() 
           WHERE tx_id = $4
-        `, [payuTxId, bankRef, JSON.stringify(verifyRes.raw || { ack: true }), txnid]);
+        `, [payuTxId, bankRef, JSON.stringify(verifyRes.raw || {}), txnid]);
 
         // If ride reservation, confirm reservation
         if (payment.reservation_id) {
@@ -871,22 +879,27 @@ router.get('/status/:txnid', async (req, res) => {
               WHERE (mobile LIKE $3 AND mobile != '') OR vehicle_number = $4 OR reservation_id = $4
           `, [parseFloat(payment.amount), txnid, `%${cleanMob}%`, payment.reservation_id]).catch(() => {});
         }
-
-        try {
-          const { delByPattern } = require('../redis');
-          await delByPattern('payments:*');
-        } catch (_) {}
-
-        result = await db.query('SELECT * FROM payu_payments WHERE tx_id = $1 LIMIT 1', [txnid]);
-        payment = result.rows[0];
-      } else if (verifyRes.payuId && !payment.payu_id) {
-        await db.query(
-          'UPDATE payu_payments SET payu_id = $1, updated_at = NOW() WHERE tx_id = $2',
-          [verifyRes.payuId, txnid]
-        ).catch(() => {});
-        result = await db.query('SELECT * FROM payu_payments WHERE tx_id = $1 LIMIT 1', [txnid]);
-        payment = result.rows[0];
+      } else if (verifyRes.status === 'Failed') {
+        const errorMsg = verifyRes.errorMsg || (verifyRes.isDropped ? 'Transaction was marked as dropped' : 'Payment failed at PayU gateway');
+        await db.query(`
+          UPDATE payu_payments 
+          SET status = 'Failed',
+              error_message = $1,
+              payu_id = COALESCE($2, payu_id),
+              bank_ref_num = COALESCE($3, bank_ref_num),
+              raw_response = $4,
+              updated_at = NOW() 
+          WHERE tx_id = $5
+        `, [errorMsg, verifyRes.payuId, verifyRes.bankRefNum, JSON.stringify(verifyRes.raw || {}), txnid]);
       }
+
+      try {
+        const { delByPattern } = require('../redis');
+        await delByPattern('payments:*');
+      } catch (_) {}
+
+      result = await db.query('SELECT * FROM payu_payments WHERE tx_id = $1 LIMIT 1', [txnid]);
+      payment = result.rows[0];
     }
 
     const rawStatus = payment?.status || 'Pending';
@@ -1045,31 +1058,36 @@ router.post('/verify', async (req, res) => {
     const pRes = await db.query('SELECT * FROM payu_payments WHERE tx_id = $1 LIMIT 1', [activeTxId]);
     const payment = pRes.rows.length > 0 ? pRes.rows[0] : null;
 
-    // Check caller privilege for administrative manual approval
-    const callerRole = (req.headers['x-user-role'] || '').toLowerCase();
-    const apiKey = req.headers['x-api-key'] || req.headers['authorization'];
-    const isPrivilegedOperator = ['superadmin', 'platformadmin', 'admin', 'employee', 'support'].some(r => callerRole.includes(r)) || apiKey === 'evegah-internal-key' || Boolean(req.headers['authorization']);
-
+    // Verify status with PayU gateway directly
+    const gwCheck = await verifyPayUPaymentWithGateway(activeTxId);
     let isAuthoritativelyVerified = false;
-    if (payment && String(payment.status).toLowerCase() === 'success') {
-      isAuthoritativelyVerified = true;
-    } else if (isPrivilegedOperator && (String(status).toUpperCase() === 'SUCCESS' || req.body.ack === true)) {
-      isAuthoritativelyVerified = true;
-    } else {
-      // Query PayU gateway directly
-      const gwCheck = await verifyPayUPaymentWithGateway(activeTxId);
-      if (gwCheck && gwCheck.verified && gwCheck.status === 'Success') {
+
+    if (gwCheck && gwCheck.verified) {
+      if (gwCheck.status === 'Success') {
         isAuthoritativelyVerified = true;
-      } else if (req.body.ack === true || String(status).toUpperCase() === 'SUCCESS') {
-        isAuthoritativelyVerified = true;
+      } else if (gwCheck.status === 'Failed') {
+        const errorMsg = gwCheck.errorMsg || (gwCheck.isDropped ? 'Transaction was marked as dropped' : 'Payment failed at PayU gateway');
+        await db.query(`
+          UPDATE payu_payments 
+          SET status = 'Failed',
+              error_message = $1,
+              payu_id = COALESCE($2, payu_id),
+              bank_ref_num = COALESCE($3, bank_ref_num),
+              raw_response = $4,
+              updated_at = NOW() 
+          WHERE tx_id = $5
+        `, [errorMsg, gwCheck.payuId, gwCheck.bankRefNum, JSON.stringify(gwCheck.raw || {}), activeTxId]).catch(() => {});
       }
+    } else if (payment && String(payment.status).toLowerCase() === 'success') {
+      isAuthoritativelyVerified = true;
     }
 
     if (!isAuthoritativelyVerified) {
+      const errorMsg = gwCheck?.errorMsg || 'Payment has not been confirmed by PayU Gateway. Untrusted client status rejected.';
       return res.status(400).json({
         status: 'error',
         code: 'PAYMENT_NOT_CONFIRMED',
-        message: 'Payment has not been confirmed by PayU Gateway. Untrusted client status rejected.',
+        message: errorMsg,
         tx_id: activeTxId,
       });
     }
@@ -1378,4 +1396,5 @@ async function processPayURefund({ payuId, txnid, reservationId, mobile, amount,
 }
 
 router.processPayURefund = processPayURefund;
+router.verifyPayUPaymentWithGateway = verifyPayUPaymentWithGateway;
 module.exports = router;

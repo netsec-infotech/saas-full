@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { sendWhatsAppReceipt } = require('../utils/whatsapp');
 const { delByPattern } = require('../redis');
+const { verifyPayUPaymentWithGateway } = require('./payu');
 
 // 1. POST /api/rides/new - New Ride Registration (Direct to Renters Table)
 router.post('/new', async (req, res) => {
@@ -145,27 +146,46 @@ router.post('/new', async (req, res) => {
           `Ride Booking (${package_name || 'Rental Plan'})`
         ]);
       } catch (_) {}
-    } else if (req.body.payu_tx_id) {
+    } else if (req.body.payu_tx_id && !isCash) {
       try {
+        const gwCheck = await verifyPayUPaymentWithGateway(req.body.payu_tx_id);
+        const isGwSuccess = gwCheck && gwCheck.verified && gwCheck.status === 'Success';
+        const gwStatus = isGwSuccess ? 'Success' : 'Failed';
+        const errorMsg = isGwSuccess ? null : (gwCheck?.errorMsg || 'Transaction dropped or failed at gateway');
+
         await db.query(`
           UPDATE payu_payments
-          SET status = 'Success',
-              rider_name = COALESCE(NULLIF($1, ''), rider_name),
-              mobile = COALESCE(NULLIF($2, ''), mobile),
-              email = COALESCE(NULLIF($3, ''), email),
-              reservation_id = COALESCE(reservation_id, $4),
+          SET status = $1,
+              error_message = $2,
+              rider_name = COALESCE(NULLIF($3, ''), rider_name),
+              mobile = COALESCE(NULLIF($4, ''), mobile),
+              email = COALESCE(NULLIF($5, ''), email),
+              reservation_id = COALESCE(reservation_id, $6),
+              payu_id = COALESCE($7, payu_id),
               updated_at = NOW()
-          WHERE tx_id = $5
-        `, [rider_name, mobile, email || null, String(insertedId), req.body.payu_tx_id]);
-        await db.query(`
-          UPDATE payment_transactions
-          SET status = 'SUCCESS',
-              customer_name = COALESCE(NULLIF($1, ''), customer_name),
-              mobile = COALESCE(NULLIF($2, ''), mobile),
-              updated_at = NOW()
-          WHERE transaction_id = $3
-        `, [rider_name, mobile, req.body.payu_tx_id]);
+          WHERE tx_id = $8
+        `, [gwStatus, errorMsg, rider_name, mobile, email || null, String(insertedId), gwCheck?.payuId || null, req.body.payu_tx_id]);
+
+        if (isGwSuccess) {
+          await db.query(`
+            UPDATE payment_transactions
+            SET status = 'SUCCESS',
+                customer_name = COALESCE(NULLIF($1, ''), customer_name),
+                mobile = COALESCE(NULLIF($2, ''), mobile),
+                updated_at = NOW()
+            WHERE transaction_id = $3
+          `, [rider_name, mobile, req.body.payu_tx_id]).catch(() => {});
+        }
       } catch (_) {}
+    } else if (req.body.payu_tx_id && isCash) {
+      // If customer switched to cash, mark the initiated PayU attempt as dropped
+      await db.query(`
+        UPDATE payu_payments
+        SET status = 'Failed',
+            error_message = 'Payment completed via Cash at counter',
+            updated_at = NOW()
+        WHERE tx_id = $1 AND status != 'Success'
+      `, [req.body.payu_tx_id]).catch(() => {});
     }
 
     // Persist all uploaded documents (Identity, Live Selfie, 4-angle vehicle inspection) into PostgreSQL documents table

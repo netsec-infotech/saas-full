@@ -480,7 +480,7 @@ export default function ReviewPage() {
 
       const resJson: any = await api.post('/rides/new', payload);
 
-      if (payload.payu_tx_id) {
+      if (payload.payu_tx_id && payload.payment_mode !== 'Cash') {
         api.post('/payments/payu/verify', {
           tx_id: payload.payu_tx_id,
           amount: payload.total,

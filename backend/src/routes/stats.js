@@ -791,9 +791,21 @@ router.get('/zone-admin', async (req, res) => {
           FROM reservations res
           WHERE res.payment_status = 'Paid'
             AND (res.payment_mode ILIKE '%cash%' OR res.payment_mode IS NULL)
-            AND NOT EXISTS (SELECT 1 FROM payu_payments pp WHERE pp.tx_id = res.transaction_id OR pp.reservation_id = res.reservation_id)
-            AND NOT EXISTS (SELECT 1 FROM icici_payments ip WHERE ip.tx_id = res.transaction_id OR ip.reservation_id = res.reservation_id)
+            AND NOT EXISTS (SELECT 1 FROM payu_payments pp WHERE (pp.tx_id = res.transaction_id OR pp.reservation_id = res.reservation_id) AND UPPER(pp.status) = 'SUCCESS')
+            AND NOT EXISTS (SELECT 1 FROM icici_payments ip WHERE (ip.tx_id = res.transaction_id OR ip.reservation_id = res.reservation_id) AND UPPER(ip.status) = 'SUCCESS')
             ${zoneResvClause}
+          UNION ALL
+          SELECT COALESCE(ren.rent, 0)::numeric as amount
+          FROM renters ren
+          WHERE ren.status != 'Cancelled'
+            AND COALESCE(ren.rent, 0) > 0
+            AND NOT EXISTS (
+              SELECT 1 FROM payu_payments pp WHERE pp.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ren.mobile, '\\D', '', 'g'), 10) AND UPPER(pp.status) = 'SUCCESS'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM reservations res WHERE res.mobile LIKE '%' || RIGHT(REGEXP_REPLACE(ren.mobile, '\\D', '', 'g'), 10) AND res.payment_status = 'Paid'
+            )
+            ${zoneRenterClause}
         ) all_rev
       `, zoneParams),
       db.query(`
@@ -1007,7 +1019,7 @@ router.get('/zone-admin', async (req, res) => {
 
     const periodDeposit = parseFloat(depositRes.rows[0]?.total || 0);
     const allTimeDeposit = parseFloat(allTimeDepositRes.rows[0]?.total || 0);
-    const totalDeposit = periodDeposit > 0 ? periodDeposit : allTimeDeposit;
+    const totalDeposit = allTimeDeposit > 0 ? allTimeDeposit : periodDeposit;
 
     const activeVeh = parseInt(activeVehRes.rows[0]?.total || 0);
     const activeResv = parseInt(activeResvRes.rows[0]?.total || 0);
