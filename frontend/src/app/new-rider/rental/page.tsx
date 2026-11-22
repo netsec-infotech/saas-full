@@ -485,7 +485,7 @@ const IPin = () => (
 );
 
 function normalizeModel(m: string): string {
-  if (!m) return 'Evegah City';
+  if (!m) return '';
   const l = m.toLowerCase().trim();
   if (l.includes('nemo')) return 'Evegah Nemo';
   if (l.includes('king')) return 'Evegah King';
@@ -493,17 +493,18 @@ function normalizeModel(m: string): string {
   if (l.includes('city')) return 'Evegah City';
   if (l.includes('pro')) return 'Evegah Pro';
   if (l.includes('fly')) return 'Evegah Fly';
-  return m;
+  return m.trim();
 }
 
 function matchesModel(itemModel: string | undefined, currentModel: string): boolean {
-  if (!itemModel) return true;
+  if (!itemModel || !currentModel) return false;
   const im = itemModel.trim().toLowerCase();
-  if (!im || im === 'all' || im === 'all models') return true;
   const cm = currentModel.trim().toLowerCase();
+  if (!im || !cm) return false;
+  if (im === 'all' || im === 'all models') return true;
   const normIm = normalizeModel(im).toLowerCase();
   const normCm = normalizeModel(cm).toLowerCase();
-  return normIm === normCm || normIm.includes(normCm) || normCm.includes(normIm);
+  return normIm === normCm;
 }
 
 const formatLocalDate = (d: Date): string => {
@@ -604,6 +605,27 @@ export default function RentalDetailsPage() {
   const [activeDraft, setActiveDraft] = useState<any>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [savingDraft, setSavingDraft] = useState<boolean>(false);
+
+  // Restore saved rental state on initial load
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem('evegah_new_ride_rental');
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (saved.start_date) setStartDate(saved.start_date);
+        if (saved.start_time) setStartTime(saved.start_time);
+        if (saved.return_date) setReturnDate(saved.return_date);
+        if (saved.return_time) setReturnTime(saved.return_time);
+        if (saved.total_days) setTotalDays(Number(saved.total_days) || 1);
+        if (saved.vehicle_model) setSelectedModelName(normalizeModel(saved.vehicle_model));
+        if (saved.vehicle_code) setSelectedVehicleCode(saved.vehicle_code);
+        if (saved.battery_id) setSelectedBatteryId(saved.battery_id);
+      }
+    } catch (e) {
+      console.error('Failed to restore rental draft from localStorage:', e);
+    }
+  }, []);
 
   // Handle direct zone switch from on-page dropdown or header
   const handleZoneChange = (zoneName: string) => {
@@ -736,8 +758,23 @@ export default function RentalDetailsPage() {
 
         setAvailableModels(finalModels);
 
-        // Auto-select first model that has available units in this zone
-        if (modelsWithVehicles.length > 0 && !modelsWithVehicles.includes(selectedModelName)) {
+        // Auto-select model: check saved rental model first
+        let initialModel = '';
+        if (typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem('evegah_new_ride_rental');
+            if (raw) {
+              const saved = JSON.parse(raw);
+              if (saved.vehicle_model) {
+                const norm = normalizeModel(saved.vehicle_model);
+                if (finalModels.includes(norm)) initialModel = norm;
+              }
+            }
+          } catch (e) {}
+        }
+        if (initialModel) {
+          setSelectedModelName(initialModel);
+        } else if (modelsWithVehicles.length > 0 && !modelsWithVehicles.includes(selectedModelName)) {
           setSelectedModelName(modelsWithVehicles[0]);
         } else if (!finalModels.includes(selectedModelName)) {
           setSelectedModelName(finalModels[0]);
@@ -757,7 +794,18 @@ export default function RentalDetailsPage() {
         const bData = Array.isArray(res) ? res : (res.data || []);
         setBatteriesList(bData);
         if (bData.length > 0) {
-          setSelectedBatteryId(bData[0].battery_id || bData[0].id);
+          let savedBatId = '';
+          if (typeof window !== 'undefined') {
+            try {
+              const raw = localStorage.getItem('evegah_new_ride_rental');
+              if (raw) savedBatId = JSON.parse(raw).battery_id;
+            } catch (e) {}
+          }
+          if (savedBatId && bData.some((b: any) => (b.battery_id || b.id) === savedBatId)) {
+            setSelectedBatteryId(savedBatId);
+          } else {
+            setSelectedBatteryId(bData[0].battery_id || bData[0].id);
+          }
         } else {
           setSelectedBatteryId('');
         }
@@ -775,10 +823,23 @@ export default function RentalDetailsPage() {
 
     setFilteredVehicles(currentModelVehicles);
     if (currentModelVehicles.length > 0) {
-      const exists = currentModelVehicles.some((v: any) => (v.code || v.id) === selectedVehicleCode);
-      if (!exists) {
-        setSelectedVehicleCode(currentModelVehicles[0].code || currentModelVehicles[0].id);
-        setSelectedVehicle(currentModelVehicles[0]);
+      let savedVehCode = '';
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('evegah_new_ride_rental');
+          if (raw) savedVehCode = JSON.parse(raw).vehicle_code;
+        } catch (e) {}
+      }
+      const matchedVeh = currentModelVehicles.find((v: any) => (v.code || v.id) === savedVehCode);
+      if (matchedVeh) {
+        setSelectedVehicleCode(matchedVeh.code || matchedVeh.id);
+        setSelectedVehicle(matchedVeh);
+      } else {
+        const exists = currentModelVehicles.some((v: any) => (v.code || v.id) === selectedVehicleCode);
+        if (!exists) {
+          setSelectedVehicleCode(currentModelVehicles[0].code || currentModelVehicles[0].id);
+          setSelectedVehicle(currentModelVehicles[0]);
+        }
       }
     } else {
       setSelectedVehicleCode('');
@@ -843,10 +904,9 @@ export default function RentalDetailsPage() {
 
     // 3. Multi-day / Packages extraction
     const allPkgs: any[] = [];
-    if (Array.isArray(zPricing.packages)) {
+    if (Array.isArray(zPricing.packages) && zPricing.packages.length > 0) {
       allPkgs.push(...zPricing.packages);
-    }
-    if (zPricing.modelPackages) {
+    } else if (zPricing.modelPackages) {
       Object.keys(zPricing.modelPackages).forEach(k => {
         if (Array.isArray(zPricing.modelPackages[k])) {
           zPricing.modelPackages[k].forEach((p: any) => {
@@ -866,8 +926,10 @@ export default function RentalDetailsPage() {
       applicable.forEach((p: any, idx: number) => {
         const d = parseDurationDays(p);
         const pModel = (p.model || '').toLowerCase().trim();
-        const pkgName = p.name || (d === 0.5 ? 'Half Day Pass' : d === 1 ? 'Daily Pass' : d === 7 ? 'Weekly Pass' : d === 30 ? 'Monthly Pas' : `${d} Days Pass`);
-        const key = `${d}_${pkgName.toLowerCase()}_${pModel}`;
+        const pkgName = p.name || (d === 0.5 ? 'Half Day Pass' : d === 1 ? 'Daily Pass' : d === 7 ? 'Weekly Pass' : d === 30 ? 'Monthly Pass' : `${d} Days Pass`);
+        const priceVal = parseFloat(p.price || 0);
+        const depVal = parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0));
+        const key = `${d}_${pkgName.toLowerCase()}_${pModel}_${priceVal}_${depVal}`;
         byKey.set(key, {
           ...p,
           id: p.id || `pkg_${d}d_${idx}`,
@@ -875,8 +937,8 @@ export default function RentalDetailsPage() {
           duration_days: d,
           duration_hours: p.duration_hours || (d * 24),
           name: pkgName,
-          price: parseFloat(p.price || 0),
-          deposit: parseFloat(p.deposit !== undefined && p.deposit !== null ? p.deposit : (zPricing.securityDeposit || 0)),
+          price: priceVal,
+          deposit: depVal,
           rateType: 'package',
           model: p.model || selectedModelName
         });
@@ -889,6 +951,25 @@ export default function RentalDetailsPage() {
     // Strictly connected with backend: no dummy fallback
     setPackagesList(pkgs);
     setSelectedPackage((prev: any) => {
+      // Check if we have saved rental in localStorage to restore
+      let savedPlanName = '';
+      let savedPlanRate = 0;
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('evegah_new_ride_rental');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            savedPlanName = parsed.plan_type || '';
+            savedPlanRate = Number(parsed.plan_rate || 0);
+          }
+        } catch (e) {}
+      }
+
+      if (savedPlanName) {
+        const savedMatch = pkgs.find((p: any) => p.name === savedPlanName && (savedPlanRate ? p.price === savedPlanRate : true));
+        if (savedMatch) return savedMatch;
+      }
+
       if (prev) {
         const match = pkgs.find((p: any) => String(p.id) === String(prev.id) || p.name === prev.name);
         if (match) return match;

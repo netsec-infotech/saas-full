@@ -277,8 +277,9 @@ export default function BatteryInventoryPage() {
   const filtered = batteries.filter(b => {
     let matchesZone = true;
     if (selectedZone && selectedZone !== 'All Zones') {
-      const zStr = (b.zone || b.location || '').toLowerCase();
-      matchesZone = zStr.includes(selectedZone.toLowerCase().trim());
+      const targetZones = selectedZone.split(',').map(s => s.toLowerCase().replace(/zone|hub|-/g, '').trim()).filter(Boolean);
+      const zStr = (b.zone || b.location || '').toLowerCase().replace(/zone|hub|-/g, '').trim();
+      matchesZone = targetZones.length === 0 || targetZones.some(tz => zStr.includes(tz) || tz.includes(zStr));
     }
 
     const matchesSearch = 

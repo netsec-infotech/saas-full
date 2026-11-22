@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { getCache, setCache, delByPattern } = require('../redis');
+const { buildZoneSqlFilter, parseZoneParam } = require('../utils/zoneHelper');
 
 // Helper: normalize media and upload URLs
 function normalizeMediaUrl(url) {
@@ -2289,9 +2290,8 @@ router.get('/documents', async (req, res) => {
     `;
     const resvParams = [`%${effectiveLast10 || '0000000000'}`, `%${renter?.rider_name || riderNameQuery || '___'}%`];
     if (!isAllZones) {
-      const zClean = rawZone.replace(/zone|hub|-/gi, '').trim();
-      resvSql += ` AND (pickup_zone ILIKE $3 OR drop_zone ILIKE $3 OR pickup_zone ILIKE $4 OR drop_zone ILIKE $4)`;
-      resvParams.push(`%${rawZone}%`, `%${zClean}%`);
+      const zoneSql = buildZoneSqlFilter(rawZone, ['pickup_zone', 'drop_zone'], resvParams, resvParams.length + 1);
+      if (zoneSql) resvSql += ` AND ${zoneSql}`;
     }
     resvSql += ` ORDER BY created_at DESC LIMIT 20`;
 

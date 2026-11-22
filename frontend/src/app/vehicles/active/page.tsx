@@ -260,7 +260,15 @@ export default function ActiveRidesPage() {
   }, [dbRenterList]);
 
   const filtered = activeRides.filter(r => {
-    const matchesZone = !selectedZone || selectedZone === 'All Zones' || r.pickup.toLowerCase().includes(selectedZone.toLowerCase().replace(/zone|vadodara|-/g, '').trim());
+    const matchesZone = (() => {
+      if (!selectedZone || selectedZone === 'All Zones') return true;
+      const targetZones = selectedZone.split(',')
+        .map(s => s.trim().toLowerCase().replace(/zone|vadodara|-/g, '').trim())
+        .filter(s => s && s !== 'all' && s !== 'all s' && !s.includes('platform wide'));
+      if (targetZones.length === 0) return true;
+      const rz = (r.pickup || '').trim().toLowerCase().replace(/zone|vadodara|-/g, '').trim();
+      return Boolean(rz && targetZones.some(tz => rz.includes(tz) || tz.includes(rz)));
+    })();
     const matchesSearch = r.renter.toLowerCase().includes(search.toLowerCase()) || r.rideId.toLowerCase().includes(search.toLowerCase()) || r.code.toLowerCase().includes(search.toLowerCase());
     const matchesAlert = alertFilter === 'All' || (alertFilter === 'Warning' && r.status !== 'Normal') || (alertFilter === 'Normal' && r.status === 'Normal');
     return matchesZone && matchesSearch && matchesAlert;

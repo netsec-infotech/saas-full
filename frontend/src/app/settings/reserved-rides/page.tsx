@@ -751,10 +751,10 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
                           ? selectedZone 
                           : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
                         if (!effectiveZone) return true;
-                        const ez = effectiveZone.toLowerCase().replace(/zone|vadodara|-/g, '').trim();
+                        const targetZones = effectiveZone.split(',').map(s => s.toLowerCase().replace(/zone|vadodara|-/g, '').trim()).filter(Boolean);
                         const pz = (r.pickup_zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
                         const dz = (r.drop_zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
-                        return Boolean((pz && (pz.includes(ez) || ez.includes(pz))) || (dz && (dz.includes(ez) || ez.includes(dz))));
+                        return Boolean(targetZones.length === 0 || targetZones.some(tz => (pz && (pz.includes(tz) || tz.includes(pz))) || (dz && (dz.includes(tz) || tz.includes(dz)))));
                       })
                       .map((res, idx) => {
                         const statLower = res.status.toLowerCase();

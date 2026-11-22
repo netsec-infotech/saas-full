@@ -1462,19 +1462,13 @@ export default function NewRiderPage() {
             }
           }
         });
-      } else if (shouldResume) {
+      } else {
+        // Restore persistent form data if available (e.g. user navigated back from Step 2/3/4)
         const saved = JSON.parse(localStorage.getItem('evegah_new_ride_kyc') || '{}');
-        if (saved && typeof saved === 'object' && saved.fullName) {
+        if (saved && typeof saved === 'object' && (saved.fullName || saved.mobile || saved.aadhaarNumber)) {
           const validDob = saved.dob && /^\d{4}-\d{2}-\d{2}$/.test(saved.dob) ? saved.dob : '';
           setFormData((prev: any) => ({ ...prev, ...saved, dob: validDob }));
         }
-      } else {
-        // Fresh registration: wipe all previous form storage so no old test data autofills!
-        localStorage.removeItem('evegah_new_ride_kyc');
-        localStorage.removeItem('evegah_new_ride_rental');
-        localStorage.removeItem('evegah_new_ride_payment');
-        localStorage.removeItem('evegah_active_draft_id');
-        setFormData(initialDefaults);
       }
     } catch (_) {}
   }, []);

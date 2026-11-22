@@ -2919,9 +2919,9 @@ function GroundOperationsRoleDashboard() {
         api.get(`/stats/employee${queryParam}`).catch(() => null),
         api.get('/today-summary').catch(() => null),
         api.get('/stats/co2').catch(() => null),
-        api.get('/vehicles').catch(() => null),
+        api.get(`/vehicles${queryParam}`).catch(() => null),
         api.get('/requests?limit=6').catch(() => null),
-        api.get('/renters?limit=6').catch(() => null)
+        api.get(`/renters?limit=6${queryParam ? queryParam.replace('?', '&') : ''}`).catch(() => null)
       ]);
 
       let mergedOps: any = {};

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { getCache, setCache } = require('../redis');
+const { buildZoneSqlFilter, parseZoneParam } = require('../utils/zoneHelper');
 
 // GET /api/stats — Dashboard stat cards
 router.get('/', async (req, res) => {
@@ -15,17 +16,24 @@ router.get('/', async (req, res) => {
     
     let resvQuery = `SELECT COUNT(*) as count, COALESCE(SUM(fare::numeric), 0) as rev FROM reservations WHERE 1=1`;
     let userQuery = `SELECT COUNT(*) as count FROM users WHERE 1=1`;
-    const params = [];
-    if (zone) {
-      resvQuery += ` AND (pickup_zone = $1 OR drop_zone = $1)`;
-      userQuery += ` AND (zone = $1 OR zone = 'Multiple Zones')`;
-      params.push(zone);
+    let vehQuery = `SELECT COUNT(*) as count FROM vehicles WHERE 1=1`;
+    const resvParams = [];
+    const userParams = [];
+    const vehParams = [];
+
+    if (zone && zone !== 'All Zones') {
+      const resvF = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], resvParams, 1);
+      resvQuery += resvF.sqlClause;
+      const userF = buildZoneSqlFilter(zone, 'zone', userParams, 1);
+      userQuery += userF.sqlClause;
+      const vehF = buildZoneSqlFilter(zone, 'zone', vehParams, 1);
+      vehQuery += vehF.sqlClause;
     }
 
     const [userCountRes, vehicleCountRes, resvRes] = await Promise.all([
-      db.query(userQuery, params).catch(() => ({ rows: [{ count: 3 }] })),
-      db.query(zone ? `SELECT COUNT(*) as count FROM vehicles WHERE zone = $1` : `SELECT COUNT(*) as count FROM vehicles`, params).catch(() => ({ rows: [{ count: 8 }] })),
-      db.query(resvQuery, params).catch(() => ({ rows: [{ count: 9, rev: 17065 }] })),
+      db.query(userQuery, userParams).catch(() => ({ rows: [{ count: 3 }] })),
+      db.query(vehQuery, vehParams).catch(() => ({ rows: [{ count: 8 }] })),
+      db.query(resvQuery, resvParams).catch(() => ({ rows: [{ count: 9, rev: 17065 }] })),
     ]);
 
     const totalUsers = parseInt(userCountRes.rows[0]?.count) || 3;
@@ -60,16 +68,23 @@ router.get('/super-admin', async (req, res) => {
     if (cached) {
       return res.json(cached);
     }
-    const zoneParams = zone ? [zone] : [];
+    const resvParams = [];
+    const vehParams = [];
+    let resvFilter = '';
+    let vehicleFilter = '';
 
-    let resvFilter = zone ? `WHERE pickup_zone = $1 OR drop_zone = $1` : '';
-    let vehicleFilter = zone ? `WHERE zone = $1` : '';
+    if (zone && zone !== 'All Zones') {
+      const resvF = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], resvParams, 1);
+      if (resvF.sqlClause) resvFilter = ` WHERE 1=1 ${resvF.sqlClause} `;
+      const vehF = buildZoneSqlFilter(zone, 'zone', vehParams, 1);
+      if (vehF.sqlClause) vehicleFilter = ` WHERE 1=1 ${vehF.sqlClause} `;
+    }
 
     const [userRes, rentersRes, vehiclesRes, reservationsRes, zonesRes, zoneStatsRes, plansRes, statusRes, recentResvRes, recentRentersRes] = await Promise.all([
       db.query(`SELECT COUNT(*) as total FROM users`),
       db.query(`SELECT COUNT(*) as total FROM renters`),
-      db.query(`SELECT COUNT(*) as total FROM vehicles ${vehicleFilter}`, zoneParams),
-      db.query(`SELECT COUNT(*) as total, COALESCE(SUM(fare::numeric), 0) as rev FROM reservations ${resvFilter}`, zoneParams),
+      db.query(`SELECT COUNT(*) as total FROM vehicles ${vehicleFilter}`, vehParams),
+      db.query(`SELECT COUNT(*) as total, COALESCE(SUM(fare::numeric), 0) as rev FROM reservations ${resvFilter}`, resvParams),
       db.query(`SELECT id, name, code, city, max_vehicles FROM zones ORDER BY id ASC`),
       db.query(`
         SELECT 
@@ -90,7 +105,7 @@ router.get('/super-admin', async (req, res) => {
         ${resvFilter}
         GROUP BY COALESCE(package_type, 'Daily Package') 
         ORDER BY rev DESC
-      `, zoneParams),
+      `, resvParams),
       db.query(`
         SELECT 
           COUNT(CASE WHEN status IN ('Active Ride', 'Confirmed') THEN 1 END) as active,
@@ -99,14 +114,14 @@ router.get('/super-admin', async (req, res) => {
           COUNT(CASE WHEN status = 'Completed' THEN 1 END) as completed
         FROM reservations
         ${resvFilter}
-      `, zoneParams),
+      `, resvParams),
       db.query(`
         SELECT id, reservation_id, customer_name, package_type, fare, payment_mode, payment_status, pickup_zone, created_at 
         FROM reservations 
         ${resvFilter}
         ORDER BY created_at DESC 
         LIMIT 5
-      `, zoneParams),
+      `, resvParams),
       db.query(`
         SELECT id, rider_name, mobile, package_name, created_at, status 
         FROM renters 
@@ -426,29 +441,37 @@ router.get('/operations', async (req, res) => {
   try {
     const zone = req.query.zone && req.query.zone !== 'All Zones' ? req.query.zone : null;
 
-    let vQuery = `SELECT COUNT(*) as total FROM vehicles`;
+    let vQuery = `SELECT COUNT(*) as total FROM vehicles WHERE 1=1`;
     let inRideQuery = `SELECT COUNT(*) as total FROM vehicles WHERE vehicle_status = 'In Ride'`;
     let availQuery = `SELECT COUNT(*) as total FROM vehicles WHERE vehicle_status = 'Available'`;
-    let kmQuery = `SELECT COALESCE(SUM(total_km_covered::numeric), 0) as km FROM vehicles`;
+    let kmQuery = `SELECT COALESCE(SUM(total_km_covered::numeric), 0) as km FROM vehicles WHERE 1=1`;
     let resvQuery = `SELECT COUNT(*) as total, COALESCE(SUM(fare::numeric), 0) as rev FROM reservations WHERE status IN ('Active Ride', 'Confirmed')`;
-    const params = [];
+    const vehParams = [];
+    const inRideParams = [];
+    const availParams = [];
+    const kmParams = [];
+    const resvParams = [];
 
-    if (zone) {
-      vQuery += ` WHERE zone = $1`;
-      inRideQuery += ` AND zone = $1`;
-      availQuery += ` AND zone = $1`;
-      kmQuery += ` WHERE zone = $1`;
-      resvQuery += ` AND (pickup_zone = $1 OR drop_zone = $1)`;
-      params.push(zone);
+    if (zone && zone !== 'All Zones') {
+      const zVeh = buildZoneSqlFilter(zone, 'zone', vehParams, 1);
+      vQuery += zVeh.sqlClause;
+      const zIR = buildZoneSqlFilter(zone, 'zone', inRideParams, 1);
+      inRideQuery += zIR.sqlClause;
+      const zAv = buildZoneSqlFilter(zone, 'zone', availParams, 1);
+      availQuery += zAv.sqlClause;
+      const zKm = buildZoneSqlFilter(zone, 'zone', kmParams, 1);
+      kmQuery += zKm.sqlClause;
+      const zResv = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], resvParams, 1);
+      resvQuery += zResv.sqlClause;
     }
 
     const [vehiclesRes, inRideRes, availRes, reservationsRes, usersRes, kmRes] = await Promise.all([
-      db.query(vQuery, params),
-      db.query(inRideQuery, params),
-      db.query(availQuery, params),
-      db.query(resvQuery, params),
+      db.query(vQuery, vehParams),
+      db.query(inRideQuery, inRideParams),
+      db.query(availQuery, availParams),
+      db.query(resvQuery, resvParams),
       db.query(`SELECT COUNT(*) as total FROM users`),
-      db.query(kmQuery, params),
+      db.query(kmQuery, kmParams),
     ]);
 
     const totalFleet = parseInt(vehiclesRes.rows[0]?.total || (zone ? 4 : 8));
@@ -516,15 +539,20 @@ router.get('/employee', async (req, res) => {
   try {
     const zone = req.query.zone && req.query.zone !== 'All Zones' ? req.query.zone : null;
 
-    let renterQuery = `SELECT id, rider_name, mobile, status, created_at, vehicle_id FROM renters`;
-    let resvQuery = `SELECT id, reservation_id, customer_name, vehicle_number, package_type, fare, deposit, status, pickup_zone, created_at FROM reservations`;
+    let renterQuery = `SELECT id, rider_name, mobile, status, created_at, vehicle_id FROM renters WHERE 1=1`;
+    let resvQuery = `SELECT id, reservation_id, customer_name, vehicle_number, package_type, fare, deposit, status, pickup_zone, created_at FROM reservations WHERE 1=1`;
     let overdueQuery = `SELECT id, reservation_id, customer_name, vehicle_number, package_type, fare, deposit, status, pickup_zone, created_at FROM reservations WHERE status IN ('Payment Due', 'Overdue', 'Cancelled')`;
-    const params = [];
+    const renterParams = [];
+    const resvParams = [];
+    const overdueParams = [];
 
-    if (zone) {
-      resvQuery += ` WHERE (pickup_zone = $1 OR drop_zone = $1)`;
-      overdueQuery += ` AND (pickup_zone = $1 OR drop_zone = $1)`;
-      params.push(zone);
+    if (zone && zone !== 'All Zones') {
+      const zRen = buildZoneSqlFilter(zone, 'zone', renterParams, 1);
+      renterQuery += zRen.sqlClause;
+      const zResv = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], resvParams, 1);
+      resvQuery += zResv.sqlClause;
+      const zOver = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], overdueParams, 1);
+      overdueQuery += zOver.sqlClause;
     }
 
     renterQuery += ` ORDER BY created_at DESC LIMIT 10`;
@@ -532,9 +560,9 @@ router.get('/employee', async (req, res) => {
     overdueQuery += ` ORDER BY created_at DESC LIMIT 10`;
 
     const [rentersRes, reservationsRes, overdueRes] = await Promise.all([
-      db.query(renterQuery),
-      db.query(resvQuery, params),
-      db.query(overdueQuery, params),
+      db.query(renterQuery, renterParams),
+      db.query(resvQuery, resvParams),
+      db.query(overdueQuery, overdueParams),
     ]);
 
     const recentRiders = rentersRes.rows.map((r, idx) => ({
@@ -610,13 +638,37 @@ router.get('/zone-admin', async (req, res) => {
     let zoneBatClause = '';
 
     if (zone) {
-      const zoneClean = zone.replace(/zone/i, '').trim();
-      zoneResvClause = ` AND (pickup_zone ILIKE $${pIdx} OR drop_zone ILIKE $${pIdx} OR pickup_zone ILIKE $${pIdx + 1} OR drop_zone ILIKE $${pIdx + 1})`;
-      zoneRenterClause = ` AND (zone ILIKE $${pIdx} OR zone ILIKE $${pIdx + 1} OR zone = 'Multiple Zones')`;
-      zoneVehClause = ` WHERE (zone ILIKE $${pIdx} OR zone ILIKE $${pIdx + 1})`;
-      zoneBatClause = ` WHERE (zone ILIKE $${pIdx} OR zone ILIKE $${pIdx + 1})`;
-      zoneParams.push(zone, `%${zoneClean}%`);
-      pIdx += 2;
+      const targetZones = parseZoneParam(zone);
+      if (targetZones.length > 0) {
+        const resvConds = [];
+        const renConds = [];
+        const vehConds = [];
+        const batConds = [];
+
+        targetZones.forEach(tz => {
+          const cleanTz = tz.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
+          resvConds.push(`pickup_zone ILIKE $${pIdx} OR drop_zone ILIKE $${pIdx}`);
+          renConds.push(`zone ILIKE $${pIdx}`);
+          vehConds.push(`zone ILIKE $${pIdx}`);
+          batConds.push(`zone ILIKE $${pIdx}`);
+          zoneParams.push(`%${tz}%`);
+          pIdx++;
+
+          if (cleanTz && cleanTz.length >= 3 && cleanTz.toLowerCase() !== tz.toLowerCase()) {
+            resvConds.push(`pickup_zone ILIKE $${pIdx} OR drop_zone ILIKE $${pIdx}`);
+            renConds.push(`zone ILIKE $${pIdx}`);
+            vehConds.push(`zone ILIKE $${pIdx}`);
+            batConds.push(`zone ILIKE $${pIdx}`);
+            zoneParams.push(`%${cleanTz}%`);
+            pIdx++;
+          }
+        });
+
+        zoneResvClause = ` AND (${resvConds.join(' OR ')})`;
+        zoneRenterClause = ` AND (${renConds.join(' OR ')} OR zone = 'Multiple Zones')`;
+        zoneVehClause = ` WHERE (${vehConds.join(' OR ')})`;
+        zoneBatClause = ` WHERE (${batConds.join(' OR ')})`;
+      }
     }
 
     if (startDate && endDate) {
@@ -1132,9 +1184,8 @@ router.get('/reports', async (req, res) => {
     const resvParams = [];
     let zoneResvClause = '';
     if (zone) {
-      const zoneClean = zone.replace(/zone/i, '').trim();
-      zoneResvClause = `WHERE (pickup_zone ILIKE $1 OR drop_zone ILIKE $1 OR pickup_zone ILIKE $2 OR drop_zone ILIKE $2)`;
-      resvParams.push(zone, `%${zoneClean}%`);
+      const zR = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], resvParams, 1);
+      if (zR.sqlClause) zoneResvClause = `WHERE 1=1 ${zR.sqlClause}`;
     }
     if (startDate && endDate) {
       const p1 = resvParams.length + 1;
@@ -1146,9 +1197,8 @@ router.get('/reports', async (req, res) => {
     const renterParams = [];
     let zoneRenterClause = '';
     if (zone) {
-      const zoneClean = zone.replace(/zone/i, '').trim();
-      zoneRenterClause = `WHERE (zone ILIKE $1 OR zone ILIKE $2 OR zone = 'Multiple Zones')`;
-      renterParams.push(zone, `%${zoneClean}%`);
+      const zRen = buildZoneSqlFilter(zone, 'zone', renterParams, 1);
+      if (zRen.sqlClause) zoneRenterClause = `WHERE (1=1 ${zRen.sqlClause} OR zone = 'Multiple Zones')`;
     }
     if (startDate && endDate) {
       const p1 = renterParams.length + 1;
@@ -1157,9 +1207,12 @@ router.get('/reports', async (req, res) => {
       renterParams.push(startDate, endDate);
     }
 
-    const zoneClean = zone ? zone.replace(/zone/i, '').trim() : '';
-    const batParams = zone ? [zone, `%${zoneClean}%`] : [];
-    const zoneBatClause = zone ? 'WHERE (zone ILIKE $1 OR zone ILIKE $2)' : '';
+    const batParams = [];
+    let zoneBatClause = '';
+    if (zone) {
+      const zBat = buildZoneSqlFilter(zone, 'zone', batParams, 1);
+      if (zBat.sqlClause) zoneBatClause = `WHERE 1=1 ${zBat.sqlClause}`;
+    }
 
     const vehParams = zone ? [zone, `%${zoneClean}%`] : [];
     const zoneVehClause = zone ? 'WHERE (zone ILIKE $1 OR zone ILIKE $2)' : '';

@@ -297,6 +297,10 @@ export default function TopBar({
   // Filter zones by type: Service Zone (Maintenance Hub) only visible on /maintenance
   // Rest of pages should only have operational zones access!
   const filteredByPageType = zonesList.filter(zName => {
+    const cleanLower = zName.trim().toLowerCase();
+    if (cleanLower === 'all zones' || cleanLower === 'all' || cleanLower.includes('platform wide') || cleanLower === 'multiple zones') {
+      return false;
+    }
     const zObj = allZonesRaw.find(z => z.name === zName);
     const zType = (zObj?.type || '').toLowerCase();
     const isServiceZone = zType.includes('service zone') || zType.includes('maintenance hub');
@@ -437,16 +441,24 @@ export default function TopBar({
               <span className="ev-tb-zone-t">
                 {(() => {
                   if (!activeZone || activeZone === 'All Zones') return 'All Zones';
-                  const parts = activeZone.split(',').map(s => s.trim()).filter(Boolean);
+                  const parts = activeZone.split(',')
+                    .map(s => s.trim())
+                    .filter(s => s && s.toLowerCase() !== 'all zones' && s.toLowerCase() !== 'all zones / platform wide' && s.toLowerCase() !== 'all' && s.toLowerCase() !== 'multiple zones');
+                  if (parts.length === 0) return 'All Zones';
                   if (parts.length === 1) return parts[0];
                   return `${parts[0]} +${parts.length - 1} Zones`;
                 })()}
               </span>
-              {activeZone && activeZone !== 'All Zones' && activeZone.split(',').length > 1 && (
-                <span style={{ fontSize: '10px', background: '#2a195c', color: '#fff', padding: '1px 6px', borderRadius: '10px', fontWeight: '700' }}>
-                  {activeZone.split(',').length}
-                </span>
-              )}
+              {(() => {
+                const parts = activeZone ? activeZone.split(',')
+                  .map(s => s.trim())
+                  .filter(s => s && s.toLowerCase() !== 'all zones' && s.toLowerCase() !== 'all zones / platform wide' && s.toLowerCase() !== 'all' && s.toLowerCase() !== 'multiple zones') : [];
+                return parts.length > 1 ? (
+                  <span style={{ fontSize: '10px', background: '#2a195c', color: '#fff', padding: '1px 6px', borderRadius: '10px', fontWeight: '700' }}>
+                    {parts.length}
+                  </span>
+                ) : null;
+              })()}
               <span style={{ color: '#9CA3AF' }}><IChevD /></span>
             </div>
 
@@ -503,9 +515,12 @@ export default function TopBar({
                 )}
 
                 {displayZonesList.map(z => {
-                  const isChecked = activeZone === 'All Zones' 
-                    ? false 
-                    : activeZone.split(',').map(s => s.trim().toLowerCase()).includes(z.toLowerCase());
+                  const parts = (!activeZone || activeZone === 'All Zones')
+                    ? []
+                    : activeZone.split(',')
+                        .map(s => s.trim().toLowerCase())
+                        .filter(s => s && s !== 'all zones' && s !== 'all zones / platform wide' && s !== 'all' && s !== 'multiple zones');
+                  const isChecked = parts.includes(z.toLowerCase());
 
                   const handleToggleZone = (e: React.MouseEvent) => {
                     e.stopPropagation();
@@ -521,7 +536,9 @@ export default function TopBar({
 
                     let currentArr = (!activeZone || activeZone === 'All Zones') 
                       ? [] 
-                      : activeZone.split(',').map(s => s.trim()).filter(Boolean);
+                      : activeZone.split(',')
+                          .map(s => s.trim())
+                          .filter(s => s && s.toLowerCase() !== 'all zones' && s.toLowerCase() !== 'all zones / platform wide' && s.toLowerCase() !== 'all' && s.toLowerCase() !== 'multiple zones');
 
                     if (currentArr.some(item => item.toLowerCase() === z.toLowerCase())) {
                       currentArr = currentArr.filter(item => item.toLowerCase() !== z.toLowerCase());

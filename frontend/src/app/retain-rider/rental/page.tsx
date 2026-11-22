@@ -300,7 +300,7 @@ const VEHICLE_MODELS: Record<string, any> = {
 };
 
 function normalizeModel(m: string): string {
-  if (!m) return 'Evegah City';
+  if (!m) return '';
   const l = m.toLowerCase().trim();
   if (l.includes('nemo')) return 'Evegah Nemo';
   if (l.includes('king')) return 'Evegah King';
@@ -308,17 +308,18 @@ function normalizeModel(m: string): string {
   if (l.includes('city')) return 'Evegah City';
   if (l.includes('pro')) return 'Evegah Pro';
   if (l.includes('fly')) return 'Evegah Fly';
-  return m;
+  return m.trim();
 }
 
 function matchesModel(itemModel: string | undefined, currentModel: string): boolean {
-  if (!itemModel) return true;
+  if (!itemModel || !currentModel) return false;
   const im = itemModel.trim().toLowerCase();
-  if (!im || im === 'all' || im === 'all models') return true;
   const cm = currentModel.trim().toLowerCase();
+  if (!im || !cm) return false;
+  if (im === 'all' || im === 'all models') return true;
   const normIm = normalizeModel(im).toLowerCase();
   const normCm = normalizeModel(cm).toLowerCase();
-  return normIm === normCm || normIm.includes(normCm) || normCm.includes(normIm);
+  return normIm === normCm;
 }
 
 const formatLocalDate = (d: Date): string => {
@@ -608,8 +609,7 @@ export default function RetainRiderRentalPage() {
         }
 
         // Filter packages matching current model or All Models
-        const applicable = pkgs.filter((p: any) => matchesModel(p.model, selectedModelName));
-        const finalPkgs = applicable.length > 0 ? applicable : pkgs;
+        const finalPkgs = pkgs.filter((p: any) => matchesModel(p.model, selectedModelName));
 
         if (finalPkgs.length > 0) {
           setPackagesList(finalPkgs);

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { buildZoneSqlFilter } = require('../utils/zoneHelper');
 
 const clean = (val) => (val !== undefined && val !== null ? String(val).trim() : '');
 
@@ -26,8 +27,8 @@ router.get('/logs', async (req, res) => {
     }
 
     if (zone && zone !== 'All Zones') {
-      params.push(`%${zone}%`);
-      query += ` AND zone ILIKE $${params.length}`;
+      const { sqlClause } = buildZoneSqlFilter(zone, 'zone', params, params.length + 1);
+      query += sqlClause;
     }
 
     if (status && status !== 'All' && status !== 'All Statuses') {
@@ -87,8 +88,8 @@ router.get('/summary', async (req, res) => {
     }
 
     if (zone && zone !== 'All Zones') {
-      params.push(`%${zone}%`);
-      query += ` AND zone ILIKE $${params.length}`;
+      const { sqlClause } = buildZoneSqlFilter(zone, 'zone', params, params.length + 1);
+      query += sqlClause;
     }
 
     if (from_date) {

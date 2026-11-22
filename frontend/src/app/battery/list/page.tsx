@@ -415,11 +415,11 @@ export default function BatteryListPage() {
   // Filtered batteries
   const filteredBatteries = useMemo(() => {
     return batteries.filter(b => {
-      // Zone filter
+      // Zone filter (supports multi-zone selection)
       if (selectedZone && selectedZone !== 'All Zones' && selectedZone !== 'Multiple Zones') {
-        const target = selectedZone.toLowerCase().replace(/zone|hub|-/g, '').trim();
+        const targetZones = selectedZone.split(',').map(s => s.toLowerCase().replace(/zone|hub|-/g, '').trim()).filter(Boolean);
         const bZone = (b.zone || '').toLowerCase().replace(/zone|hub|-/g, '').trim();
-        if (!bZone.includes(target) && !target.includes(bZone)) return false;
+        if (targetZones.length > 0 && !targetZones.some(tz => bZone.includes(tz) || tz.includes(bZone))) return false;
       }
       // Status tab
       if (statusTab !== 'all' && b.status !== statusTab) return false;

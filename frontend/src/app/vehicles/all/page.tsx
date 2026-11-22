@@ -408,7 +408,15 @@ export default function VehicleListPage() {
   };
 
   const filtered = vehiclesList.filter(v => {
-    const matchesZone = !selectedZone || selectedZone === 'All Zones' || v.zone.toLowerCase().trim() === selectedZone.toLowerCase().trim();
+    const matchesZone = (() => {
+      if (!selectedZone || selectedZone === 'All Zones') return true;
+      const targetZones = selectedZone.split(',')
+        .map(s => s.trim().toLowerCase().replace(/zone|vadodara|-/g, '').trim())
+        .filter(s => s && s !== 'all' && s !== 'all s' && !s.includes('platform wide'));
+      if (targetZones.length === 0) return true;
+      const vz = (v.zone || '').trim().toLowerCase().replace(/zone|vadodara|-/g, '').trim();
+      return Boolean(vz && targetZones.some(tz => vz.includes(tz) || tz.includes(vz)));
+    })();
     const matchesSearch = v.code.toLowerCase().includes(search.toLowerCase()) || v.renter.toLowerCase().includes(search.toLowerCase()) || v.hub.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'All' || v.status === statusFilter;
     const matchesType = typeFilter === 'All' || v.type === typeFilter || (v.type && v.type.toLowerCase() === typeFilter.toLowerCase());

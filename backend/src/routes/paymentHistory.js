@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { buildZoneSqlFilter, parseZoneParam } = require('../utils/zoneHelper');
 
 // Helper to sanitize mobile
 const cleanMob = (m) => (m || '').replace(/\D/g, '').slice(-10);
@@ -539,8 +540,8 @@ router.get('/cash-collection', async (req, res) => {
     const params = [];
 
     if (zone && zone !== 'All Zones') {
-      params.push(`%${zone}%`);
-      whereClause += ` AND (pickup_zone ILIKE $${params.length} OR drop_zone ILIKE $${params.length})`;
+      const zSql = buildZoneSqlFilter(zone, ['pickup_zone', 'drop_zone'], params, params.length + 1);
+      if (zSql) whereClause += ` AND ${zSql}`;
     }
 
     if (search) {

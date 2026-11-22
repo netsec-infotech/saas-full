@@ -6,6 +6,18 @@ import TopBar from '@/components/TopBar';
 import Link from 'next/link';
 import { api } from '@/lib/api';
 
+function normalizeModelName(m: string): string {
+  if (!m) return '';
+  const l = m.toLowerCase().trim();
+  if (l.includes('nemo')) return 'Evegah Nemo';
+  if (l.includes('king')) return 'Evegah King';
+  if (l.includes('mink')) return 'Evegah Mink';
+  if (l.includes('city')) return 'Evegah City';
+  if (l.includes('pro')) return 'Evegah Pro';
+  if (l.includes('fly')) return 'Evegah Fly';
+  return m.trim();
+}
+
 // Helper component for SearchParams inside a Suspense boundary
 function PricingForm() {
   const router = useRouter();
@@ -47,7 +59,7 @@ function PricingForm() {
                 setPricingModel(loaded.join(' & '));
                 setNotes(p.notes || '');
                 if (Array.isArray(p.hourlyPricing)) setHourlyRows(p.hourlyPricing);
-                if (Array.isArray(p.packages)) setPackages(p.packages);
+                if (Array.isArray(p.packages)) setPackages(p.packages.map((pkg: any) => ({ ...pkg, model: normalizeModelName(pkg.model) })));
                 if (p.ratePerMinute) {
                   setMinuteRate(String(p.ratePerMinute || '1.50'));
                   setMinuteMinTime(String(p.minMinutes || '10'));
@@ -74,8 +86,10 @@ function PricingForm() {
   }, [dbZones]);
 
   const [vehicleModels, setVehicleModels] = useState<{ name: string; image: string }[]>([
-    { name: 'Evegah MINK', image: '/assets/mink.png' },
-    { name: 'Evegah CITY', image: '/assets/city.png' },
+    { name: 'Evegah Mink', image: '/assets/mink.png' },
+    { name: 'Evegah City', image: '/assets/city.png' },
+    { name: 'Evegah Nemo', image: '/nemo.jpg' },
+    { name: 'Evegah King', image: '/king.jpg' },
     { name: 'Evegah Fly', image: '/Fly.png' },
     { name: 'Evegah Pro', image: '/Evegah Pro.png' }
   ]);
@@ -89,10 +103,18 @@ function PricingForm() {
         const list = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
         if (list.length > 0) {
           const dynamicList = list.map((m: any) => ({
-            name: m.name,
+            name: normalizeModelName(m.name),
             image: m.main_image ? (m.main_image.startsWith('/') || m.main_image.startsWith('http') ? m.main_image : '/' + m.main_image) : '/assets/city.png'
           }));
-          setVehicleModels(dynamicList);
+          const seen = new Set<string>();
+          const uniqueModels: any[] = [];
+          dynamicList.forEach((m: any) => {
+            if (!seen.has(m.name)) {
+              seen.add(m.name);
+              uniqueModels.push(m);
+            }
+          });
+          setVehicleModels(uniqueModels);
         }
       })
       .catch(() => {});
@@ -144,12 +166,12 @@ function PricingForm() {
   const [newPkgName, setNewPkgName] = useState('');
   const [newPkgDuration, setNewPkgDuration] = useState('');
   const [newPkgPrice, setNewPkgPrice] = useState('');
-  const [newPkgModel, setNewPkgModel] = useState('Evegah MINK');
+  const [newPkgModel, setNewPkgModel] = useState('Evegah Mink');
   const [pkgType, setPkgType] = useState('Daily');
 
   // Hourly inline form states
   const [isAddingHourly, setIsAddingHourly] = useState(false);
-  const [newHourlyModel, setNewHourlyModel] = useState('Evegah MINK');
+  const [newHourlyModel, setNewHourlyModel] = useState('Evegah Mink');
   const [newHourlyBasePrice, setNewHourlyBasePrice] = useState('');
   const [newHourlyExtraPrice, setNewHourlyExtraPrice] = useState('');
   const [newHourlyGracePeriod, setNewHourlyGracePeriod] = useState('0');
@@ -289,7 +311,7 @@ function PricingForm() {
     const durVal = parseFloat(durationToUse) || 0.5;
     const newPkg = {
       id: Date.now(),
-      model: newPkgModel || hourlyRows[0]?.model || 'All Models',
+      model: normalizeModelName(newPkgModel) || normalizeModelName(hourlyRows[0]?.model) || 'Evegah Mink',
       name: nameToUse,
       duration: durVal,
       duration_days: durVal,
@@ -1117,12 +1139,12 @@ function PricingForm() {
                           <td>
                             <select
                               className="zp-select-inline"
-                              value={pkg.model || 'Evegah MINK'}
-                              onChange={(e) => handlePackageChange(pkg.id, 'model', e.target.value)}
+                              value={normalizeModelName(pkg.model) || 'Evegah Mink'}
+                              onChange={(e) => handlePackageChange(pkg.id, 'model', normalizeModelName(e.target.value))}
                               style={{ fontWeight: 700, color: '#2A195C', width: '100%', padding: '6px 8px' }}
                             >
                               {vehicleModels.map((vm, idx) => (
-                                <option key={idx} value={vm.name}>{vm.name}</option>
+                                <option key={idx} value={normalizeModelName(vm.name)}>{normalizeModelName(vm.name)}</option>
                               ))}
                             </select>
                           </td>

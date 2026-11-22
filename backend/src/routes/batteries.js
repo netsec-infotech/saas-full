@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { getCache, setCache, delByPattern } = require('../redis');
 const XLSX = require('xlsx');
+const { buildZoneSqlFilter } = require('../utils/zoneHelper');
 
 // GET /api/batteries - List batteries
 router.get('/', async (req, res) => {
@@ -19,9 +20,9 @@ router.get('/', async (req, res) => {
     let paramCount = 1;
 
     if (zone && String(zone).trim() && String(zone).trim().toLowerCase() !== 'all zones') {
-      queryText += ` AND zone ILIKE $${paramCount}`;
-      params.push(`%${String(zone).trim()}%`);
-      paramCount++;
+      const { sqlClause, nextParamIndex } = buildZoneSqlFilter(zone, 'zone', params, paramCount);
+      queryText += sqlClause;
+      paramCount = nextParamIndex;
     }
 
     if (status && status !== 'all') {
@@ -56,8 +57,10 @@ router.get('/stats', async (req, res) => {
     let zoneFilter = '';
     const params = [];
     if (zone && String(zone).trim() && String(zone).trim().toLowerCase() !== 'all zones') {
-      zoneFilter = ' WHERE zone ILIKE $1';
-      params.push(`%${String(zone).trim()}%`);
+      const { sqlClause } = buildZoneSqlFilter(zone, 'zone', params, 1);
+      if (sqlClause) {
+        zoneFilter = ` WHERE 1=1 ${sqlClause}`;
+      }
     }
 
     const queryText = `
@@ -102,9 +105,9 @@ router.get('/swap-history', async (req, res) => {
     let paramCount = 1;
 
     if (zone && String(zone).trim() && String(zone).trim().toLowerCase() !== 'all zones') {
-      queryText += ` AND zone ILIKE $${paramCount}`;
-      params.push(`%${String(zone).trim()}%`);
-      paramCount++;
+      const { sqlClause, nextParamIndex } = buildZoneSqlFilter(zone, 'zone', params, paramCount);
+      queryText += sqlClause;
+      paramCount = nextParamIndex;
     }
 
     if (status && status !== 'all' && status !== 'All') {

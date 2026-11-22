@@ -4,6 +4,7 @@ const db = require('../db');
 const { createNotification } = require('./notifications');
 const { getCache, setCache, delByPattern } = require('../redis');
 const { sendWhatsAppReceipt } = require('../utils/whatsapp');
+const { buildZoneSqlFilter, parseZoneParam } = require('../utils/zoneHelper');
 
 // ──────────────────────────────────────────────────────────────
 // Ensure reservations columns exist
@@ -72,14 +73,21 @@ router.get('/', async (req, res) => {
     let pIdx = 1;
 
     if (!isAllZones) {
-      const zList = rawZone.split(',').map(s => s.trim().toLowerCase().replace(/zone|hub|-/g, '').trim()).filter(Boolean);
+      const zList = parseZoneParam(rawZone);
       if (zList.length > 0) {
         const zoneConds = [];
         zList.forEach(z => {
+          const cleanZ = z.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
           zoneConds.push(`(LOWER(COALESCE(r.pickup_zone, '')) LIKE $${pIdx} OR LOWER(COALESCE(r.drop_zone, '')) LIKE $${pIdx})`);
-          params.push(`%${z}%`);
-          countParams.push(`%${z}%`);
+          params.push(`%${z.toLowerCase()}%`);
+          countParams.push(`%${z.toLowerCase()}%`);
           pIdx++;
+          if (cleanZ && cleanZ.length >= 3 && cleanZ.toLowerCase() !== z.toLowerCase()) {
+            zoneConds.push(`(LOWER(COALESCE(r.pickup_zone, '')) LIKE $${pIdx} OR LOWER(COALESCE(r.drop_zone, '')) LIKE $${pIdx})`);
+            params.push(`%${cleanZ.toLowerCase()}%`);
+            countParams.push(`%${cleanZ.toLowerCase()}%`);
+            pIdx++;
+          }
         });
         query += ` AND (${zoneConds.join(' OR ')})`;
         countQuery += ` AND (${zoneConds.join(' OR ')})`;
@@ -149,12 +157,20 @@ router.get('/', async (req, res) => {
     `;
     const statsParams = [];
     if (!isAllZones) {
-      const zList = rawZone.split(',').map(s => s.trim().toLowerCase().replace(/zone|hub|-/g, '').trim()).filter(Boolean);
+      const zList = parseZoneParam(rawZone);
       if (zList.length > 0) {
         const zoneConds = [];
-        zList.forEach((z, idx) => {
-          zoneConds.push(`(LOWER(COALESCE(r.pickup_zone, '')) LIKE $${idx + 1} OR LOWER(COALESCE(r.drop_zone, '')) LIKE $${idx + 1})`);
-          statsParams.push(`%${z}%`);
+        let sIdx = 1;
+        zList.forEach(z => {
+          const cleanZ = z.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
+          zoneConds.push(`(LOWER(COALESCE(r.pickup_zone, '')) LIKE $${sIdx} OR LOWER(COALESCE(r.drop_zone, '')) LIKE $${sIdx})`);
+          statsParams.push(`%${z.toLowerCase()}%`);
+          sIdx++;
+          if (cleanZ && cleanZ.length >= 3 && cleanZ.toLowerCase() !== z.toLowerCase()) {
+            zoneConds.push(`(LOWER(COALESCE(r.pickup_zone, '')) LIKE $${sIdx} OR LOWER(COALESCE(r.drop_zone, '')) LIKE $${sIdx})`);
+            statsParams.push(`%${cleanZ.toLowerCase()}%`);
+            sIdx++;
+          }
         });
         statsSql += ` AND (${zoneConds.join(' OR ')})`;
       }
@@ -280,9 +296,8 @@ router.get('/deposits', async (req, res) => {
 
     const resParams = [];
     if (!isAllZones) {
-      const zoneClean = effectiveZone.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
-      resQuery += ` AND (pickup_zone ILIKE $1 OR drop_zone ILIKE $1 OR pickup_zone ILIKE $2 OR drop_zone ILIKE $2 OR $3 ILIKE '%' || COALESCE(NULLIF(pickup_zone, ''), 'none') || '%' OR $3 ILIKE '%' || COALESCE(NULLIF(drop_zone, ''), 'none') || '%')`;
-      resParams.push(`%${effectiveZone}%`, `%${zoneClean}%`, effectiveZone);
+      const { sqlClause } = buildZoneSqlFilter(effectiveZone, ['pickup_zone', 'drop_zone'], resParams, 1);
+      resQuery += sqlClause;
     }
     resQuery += ` ORDER BY COALESCE(returned_at, created_at) DESC`;
 
@@ -309,9 +324,8 @@ router.get('/deposits', async (req, res) => {
     `;
     const renParams = [];
     if (!isAllZones) {
-      const zoneClean = effectiveZone.replace(/zone|hub|sf|\(.*?\)|-/gi, '').trim();
-      renQuery += ` AND (r.zone ILIKE $1 OR r.zone ILIKE $2 OR $3 ILIKE '%' || COALESCE(NULLIF(r.zone, ''), 'none') || '%' OR v.zone ILIKE $1 OR v.zone ILIKE $2 OR r.zone = 'Multiple Zones')`;
-      renParams.push(`%${effectiveZone}%`, `%${zoneClean}%`, effectiveZone);
+      const { sqlClause } = buildZoneSqlFilter(effectiveZone, ['r.zone', 'v.zone'], renParams, 1);
+      renQuery += sqlClause;
     }
 
     const rentersResult = await db.query(renQuery, renParams).catch(() => ({ rows: [] }));

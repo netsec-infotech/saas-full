@@ -948,8 +948,17 @@ export default function PaymentPage() {
     try {
       const rData = JSON.parse(localStorage.getItem('evegah_new_ride_rental') || '{}');
       const kData = JSON.parse(localStorage.getItem('evegah_new_ride_kyc') || '{}');
+      const pData = JSON.parse(localStorage.getItem('evegah_new_ride_payment') || '{}');
       setRentalData(rData);
       setKycData(kData);
+      if (pData && Object.keys(pData).length > 0) {
+        if (pData.payment_mode) setPayMethod(pData.payment_mode);
+        if (pData.cash_amount !== undefined) setCashAmount(pData.cash_amount);
+        if (pData.staff_collector) setStaffCollector(pData.staff_collector);
+        if (pData.cash_receipt) setCashReceipt(pData.cash_receipt);
+        if (pData.payu_tx_id) setPayuTxId(pData.payu_tx_id);
+        if (pData.payu_verified) setPayuVerified(pData.payu_verified);
+      }
     } catch (e) {}
   }, []);
 

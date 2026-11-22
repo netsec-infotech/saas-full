@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { getCache, setCache, delByPattern } = require('../redis');
 const XLSX = require('xlsx');
+const { parseZoneParam, buildZoneSqlFilter } = require('../utils/zoneHelper');
 
 const invalidateFleetCache = async () => {
   try {
@@ -1114,17 +1115,11 @@ router.get('/', async (req, res) => {
     const params = [];
     let paramIndex = 1;
 
-    // Zone filter
+    // Zone filter (supports single or multi-zone comma-separated)
     if (zone && String(zone).trim() && String(zone).trim().toLowerCase() !== 'all zones') {
-      query += `
-        AND v.zone ILIKE $${paramIndex}
-      `;
-
-      params.push(
-        `%${String(zone).trim()}%`
-      );
-
-      paramIndex++;
+      const { sqlClause, nextParamIndex } = buildZoneSqlFilter(zone, 'v.zone', params, paramIndex);
+      query += sqlClause;
+      paramIndex = nextParamIndex;
     }
 
     // Model filter
