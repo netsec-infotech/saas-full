@@ -1033,16 +1033,16 @@ export default function RentersPage() {
   const getInitialZone = (): string => {
     if (typeof window !== 'undefined') {
       const storedActive = localStorage.getItem('evegah_active_zone');
-      const storedSelected = localStorage.getItem('evegah_selected_zone');
       const userZone = localStorage.getItem('evegah_user_zone');
       const role = localStorage.getItem('evegah_user_role') || '';
       const isSuper = role === 'super_admin' || role.toLowerCase().includes('super');
       if (!isSuper && userZone && userZone !== 'All Zones') {
         return userZone;
       }
-      if (storedActive && storedActive !== 'All Zones') return storedActive;
-      if (storedSelected && storedSelected !== 'All Zones') return storedSelected;
-      if (userZone && userZone !== 'All Zones') return userZone;
+      if (storedActive) return storedActive;
+      const storedSelected = localStorage.getItem('evegah_selected_zone');
+      if (storedSelected) return storedSelected;
+      if (userZone) return userZone;
       return 'All Zones';
     }
     return 'All Zones';
@@ -1298,16 +1298,22 @@ export default function RentersPage() {
 
   const fetchRenters = () => {
     setLoading(true);
-    const effectiveZone = (zoneFilter && zoneFilter !== 'All Zones') 
-      ? zoneFilter 
-      : (selectedZone && selectedZone !== 'All Zones' ? selectedZone : null);
-    const isAllZones = !effectiveZone;
+    const rawZone = (selectedZone && selectedZone !== 'All Zones') 
+      ? selectedZone 
+      : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
+    const isAllZones = !rawZone || 
+      rawZone.toLowerCase() === 'all zones' || 
+      rawZone.toLowerCase().includes('all zone') || 
+      rawZone.toLowerCase().includes('platform wide') ||
+      rawZone.toLowerCase() === 'all';
+    const cleanZone = isAllZones ? '' : rawZone;
+
     const queryParams = new URLSearchParams({
       page: page.toString(),
       limit: pageSize.toString(),
       search: search,
       status: statusFilter,
-      ...(!isAllZones ? { zone: effectiveZone } : {}),
+      ...(cleanZone ? { zone: cleanZone } : {}),
       ...(packageFilter ? { package: packageFilter } : {}),
       ...(modeFilter ? { mode: modeFilter } : {})
     });
@@ -1315,32 +1321,17 @@ export default function RentersPage() {
     api.get(`/renters?${queryParams.toString()}`)
       .then((res: any) => {
         if (res.status === 'success' && res.data) {
-          let dataList: Renter[] = res.data;
-          if (effectiveZone && effectiveZone !== 'All Zones') {
-            const targetZones = effectiveZone.split(',').map(s => s.toLowerCase().replace(/zone|hub|-/g, '').trim()).filter(Boolean);
-            dataList = dataList.filter(r => {
-              const rz = ((r as any).zone || '').toLowerCase().replace(/zone|hub|-/g, '').trim();
-              return Boolean(rz && targetZones.some(tz => rz.includes(tz) || tz.includes(rz)));
-            });
-          }
-          if (packageFilter) {
-            dataList = dataList.filter(r => {
-              const p = (!r.package_name || r.package_name === 'Rider Plan' || r.package_name === 'Standard Plan' || r.package_name.toLowerCase().includes('custom')) ? 'Custom' : r.package_name;
-              return p.toLowerCase() === packageFilter.toLowerCase();
-            });
-          }
-          if (modeFilter) {
-            dataList = dataList.filter(r => {
-              const isApp = (r.booking_source || '').toLowerCase().includes('app');
-              return modeFilter === 'App' ? isApp : !isApp;
-            });
-          }
-          setRenters(dataList);
+          setRenters(Array.isArray(res.data) ? res.data : []);
           if (res.pagination) setPagination(res.pagination);
           if (res.summary) setSummary(res.summary);
+        } else {
+          setRenters([]);
         }
       })
-      .catch((err) => console.error('Error loading renters:', err))
+      .catch((err) => {
+        console.error('Error loading renters:', err);
+        setRenters([]);
+      })
       .finally(() => setLoading(false));
   };
 

@@ -164,9 +164,9 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
       if (!isSuper && userZone && userZone !== 'All Zones') {
         return userZone;
       }
-      if (storedActive && storedActive !== 'All Zones') return storedActive;
-      if (storedSelected && storedSelected !== 'All Zones') return storedSelected;
-      if (userZone && userZone !== 'All Zones') return userZone;
+      if (storedActive) return storedActive;
+      if (storedSelected) return storedSelected;
+      if (userZone) return userZone;
       return 'All Zones';
     }
     return 'All Zones';
@@ -263,7 +263,13 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
       const effectiveZone = (selectedZone && selectedZone !== 'All Zones') 
         ? selectedZone 
         : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
-      const zoneParam = effectiveZone ? `&zone=${encodeURIComponent(effectiveZone)}` : '';
+      const isAll = !effectiveZone || 
+        effectiveZone.toLowerCase() === 'all zones' || 
+        effectiveZone.toLowerCase().includes('all zone') || 
+        effectiveZone.toLowerCase().includes('platform wide') ||
+        effectiveZone.toLowerCase() === 'all';
+      const cleanZone = isAll ? '' : effectiveZone;
+      const zoneParam = cleanZone ? `&zone=${encodeURIComponent(cleanZone)}` : '';
       
       const res = await fetch(`${apiUrl}/reservations?page=${page}&limit=10${searchParam}${statusParam}${zoneParam}`);
       if (res.ok) {
@@ -745,18 +751,7 @@ export function ReservedRidesPageContent({ activePath = "/settings/reserved-ride
                       </td>
                     </tr>
                   ) : (
-                    list
-                      .filter(r => {
-                        const effectiveZone = (selectedZone && selectedZone !== 'All Zones') 
-                          ? selectedZone 
-                          : (zoneFilter && zoneFilter !== 'All Zones' ? zoneFilter : '');
-                        if (!effectiveZone) return true;
-                        const targetZones = effectiveZone.split(',').map(s => s.toLowerCase().replace(/zone|vadodara|-/g, '').trim()).filter(Boolean);
-                        const pz = (r.pickup_zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
-                        const dz = (r.drop_zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
-                        return Boolean(targetZones.length === 0 || targetZones.some(tz => (pz && (pz.includes(tz) || tz.includes(pz))) || (dz && (dz.includes(tz) || tz.includes(dz)))));
-                      })
-                      .map((res, idx) => {
+                    list.map((res, idx) => {
                         const statLower = res.status.toLowerCase();
                         const payLower = (res.payment_status || '').toLowerCase();
                         const isChecked = selectedResIds.includes(res.id);

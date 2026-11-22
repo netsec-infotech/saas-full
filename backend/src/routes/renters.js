@@ -1180,7 +1180,13 @@ router.get('/', async (req, res) => {
     const search = (req.query.search || '').trim();
     const status = (req.query.status || '').trim();
     const rawZone = (req.query.zone || '').trim();
-    const isAllZones = !rawZone || rawZone === 'All Zones' || rawZone === 'All Zones (Multi-Zone)' || rawZone === 'All' || rawZone.toLowerCase().includes('all zone');
+    const isAllZones = !rawZone || 
+      rawZone === 'All Zones' || 
+      rawZone === 'All Zones (Multi-Zone)' || 
+      rawZone === 'All' || 
+      rawZone.toLowerCase().includes('all zone') ||
+      rawZone.toLowerCase().includes('platform wide') ||
+      rawZone.toLowerCase().includes('multiple zone');
     const zoneFilter = isAllZones ? null : rawZone;
 
     const packageQuery = (req.query.package || req.query.plan || '').trim().toLowerCase();
@@ -1594,11 +1600,21 @@ router.get('/', async (req, res) => {
 
   // 4d. Filter by Zone (supports single or multi-zone comma-separated)
   if (zoneFilter) {
-    const targetZones = zoneFilter.split(',').map(s => s.toLowerCase().replace(/zone|vadodara|-/g, '').trim()).filter(Boolean);
-    filteredRiders = filteredRiders.filter(r => {
-      const rz = (r.zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
-      return Boolean(rz && targetZones.some(tz => rz.includes(tz) || tz.includes(rz)));
-    });
+    const targetZones = zoneFilter.split(',')
+      .map(s => s.toLowerCase().replace(/zone|vadodara|-/g, '').trim())
+      .filter(s => s && s !== 'all' && !s.includes('all') && !s.includes('platform wide'));
+    if (targetZones.length > 0) {
+      filteredRiders = filteredRiders.filter(r => {
+        const rz = (r.zone || '').toLowerCase().replace(/zone|vadodara|-/g, '').trim();
+        const allRiderZones = Array.isArray(r.zones) 
+          ? r.zones.map(z => String(z).toLowerCase().replace(/zone|vadodara|-/g, '').trim())
+          : [rz];
+        return targetZones.some(tz => 
+          (rz && (rz.includes(tz) || tz.includes(rz))) || 
+          allRiderZones.some(az => az && (az.includes(tz) || tz.includes(az)))
+        );
+      });
+    }
   }
 
   // 5. Filter by Search
